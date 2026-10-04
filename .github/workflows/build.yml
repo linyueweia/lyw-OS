@@ -66,7 +66,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Post-process image (bootloader / DTB / armbianEnv / extlinux)
+      - name: Post-process image (verify armbian U-Boot / DTB / armbianEnv)
         run: |
           set -e
           IMG=$(ls build/output/images/*.img | head -n1)
@@ -120,18 +120,7 @@ jobs:
             } | sudo tee /mnt/ib/armbianEnv.txt >/dev/null
           fi
 
-          # (4) extlinux.conf as a second, bootstd-native entry point
-          KERNEL_NAME=$(basename "$(ls /mnt/ib/Image)" 2>/dev/null || echo Image)
-          sudo mkdir -p /mnt/ib/extlinux
-          {
-            echo "label iNextOS"
-            echo "    kernel /${KERNEL_NAME}"
-            echo "    fdt /dtb/rockchip/rk3568-lyt-t68m.dtb"
-            echo "    append console=ttyS2,1500000 earlycon=uart8250,mmio32,0xfe660000 root=UUID=${ROOT_UUID} rw rootwait cma=256M"
-          } | sudo tee /mnt/ib/extlinux/extlinux.conf >/dev/null
-
           echo "--- armbianEnv.txt ---"; cat /mnt/ib/armbianEnv.txt
-          echo "--- extlinux/extlinux.conf ---"; cat /mnt/ib/extlinux/extlinux.conf
           echo "--- DTB ---"; ls -l /mnt/ib/dtb/rockchip/rk3568-lyt-t68m.dtb
           md5sum /mnt/ib/dtb/rockchip/rk3568-lyt-t68m.dtb
 
