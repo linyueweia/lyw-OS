@@ -75,11 +75,10 @@ jobs:
           LOOP=$(sudo losetup -f --show -P "$IMG")
           echo "loop: $LOOP"
 
-          # (1) T68M verified bootloader blobs -> raw area (32KiB / 8MiB)
-          #     These are the exact blobs already proven to boot on T68M.
-          sudo dd if=t68m/kernel-files/idbloader.img of="$LOOP" bs=512 seek=64   conv=notrunc status=none
-          sudo dd if=t68m/kernel-files/u-boot.itb   of="$LOOP" bs=512 seek=16384 conv=notrunc status=none
-          echo "--- bootloader written; verify FIT magic @8MiB:"
+          # (1) bootloader: 使用 armbian 自己编译的通用 U-Boot（iNextOS 官方方案）
+          #     BOOT_SCENARIO=spl-blobs + BOOTCONFIG=radxa-e25-rk3568_defconfig
+          #     不再注入外部 bootloader blobs（原先注入的是 R5S 通用 U-Boot，内嵌 DTB 为 NanoPi R5S）
+          echo "--- verify armbian-built U-Boot FIT magic @8MiB:"
           sudo dd if="$LOOP" bs=1 skip=$((8*1024*1024)) count=4 status=none | xxd | head -1
 
           sudo mkdir -p /mnt/ib

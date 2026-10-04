@@ -55,7 +55,9 @@
 ## 引导链
 
 ```
-BootROM → idbloader.img @32KiB → u-boot.itb @8MiB   (kernel-files/ 内为 T68M 实测可用件)
+BootROM → idbloader.img @32KiB → u-boot.itb @8MiB
+          （由 armbian 以 BOOT_SCENARIO="spl-blobs" + BOOTCONFIG="radxa-e25-rk3568_defconfig"
+            编译的通用 U-Boot —— 即 iNextOS 官方方案；不再注入外部 bootloader blobs）
         → bootcmd = bootflow scan -lb              (boot_targets = mmc1(TF) mmc0(eMMC) …)
         → 引导分区(p1, FAT16 "armbi_boot") 上的 boot.scr（armbian 标准）
           以及 extlinux/extlinux.conf（本仓库额外放置，作为 bootstd 原生入口的双保险）
@@ -83,7 +85,8 @@ sync
 ```
 config/boards/lyt-t68m.csc                     板级配置（BOOT_FDT_FILE / 网口重命名 / 默认网口）
 patch/kernel/rk35xx-vendor-6.1/dt/*.dts        板级设备树（框架会自动拷入内核并改 Makefile）
-kernel-files/{idbloader.img,u-boot.itb,*.dtb}  T68M 实测可用的引导件与 DTB
+kernel-files/rk3568-lyt-t68m.dtb              板级 DTB（用于 boot 分区）
+kernel-files/{idbloader.img,u-boot.itb}      仅作参考备份，**不再注入镜像**
 .github/workflows/build.yml                    CI：云编译 + 镜像后处理
 ```
 
