@@ -91,26 +91,26 @@ jobs:
           # (3) armbianEnv.txt (fdtfile is the single board switch)
           ROOT_UUID=$(sudo blkid -s UUID -o value ${LOOP}p2)
           echo "rootfs UUID: $ROOT_UUID"
-          sudo tee /mnt/ib/armbianEnv.txt >/dev/null <<EOF
-verbosity=1
-bootlogo=false
-console=both
-extraargs=cma=256M
-overlay_prefix=rk35xx
-fdtfile=rockchip/rk3568-lyt-t68m.dtb
-rootdev=UUID=${ROOT_UUID}
-rootfstype=ext4
-EOF
+          {
+            echo "verbosity=1"
+            echo "bootlogo=false"
+            echo "console=both"
+            echo "extraargs=cma=256M"
+            echo "overlay_prefix=rk35xx"
+            echo "fdtfile=rockchip/rk3568-lyt-t68m.dtb"
+            echo "rootdev=UUID=${ROOT_UUID}"
+            echo "rootfstype=ext4"
+          } | sudo tee /mnt/ib/armbianEnv.txt >/dev/null
 
           # (4) extlinux.conf as a second, bootstd-native entry point
           KERNEL_NAME=$(basename "$(ls /mnt/ib/Image)" 2>/dev/null || echo Image)
           sudo mkdir -p /mnt/ib/extlinux
-          sudo tee /mnt/ib/extlinux/extlinux.conf >/dev/null <<EOF
-label iNextOS
-    kernel /${KERNEL_NAME}
-    fdt /dtb/rockchip/rk3568-lyt-t68m.dtb
-    append console=ttyS2,1500000 earlycon=uart8250,mmio32,0xfe660000 root=UUID=${ROOT_UUID} rw rootwait cma=256M
-EOF
+          {
+            echo "label iNextOS"
+            echo "    kernel /${KERNEL_NAME}"
+            echo "    fdt /dtb/rockchip/rk3568-lyt-t68m.dtb"
+            echo "    append console=ttyS2,1500000 earlycon=uart8250,mmio32,0xfe660000 root=UUID=${ROOT_UUID} rw rootwait cma=256M"
+          } | sudo tee /mnt/ib/extlinux/extlinux.conf >/dev/null
 
           echo "--- armbianEnv.txt ---"; cat /mnt/ib/armbianEnv.txt
           echo "--- extlinux/extlinux.conf ---"; cat /mnt/ib/extlinux/extlinux.conf
