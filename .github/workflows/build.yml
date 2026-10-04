@@ -58,6 +58,7 @@ jobs:
             RELEASE=trixie \
             ENABLE_EXTENSIONS="istorenext" \
             BUILD_MINIMAL=no \
+            BUILD_DESKTOP=no \
             KERNEL_CONFIGURE=no \
             COMPRESS_OUTPUTIMAGE="sha,img,xz" \
             SHARE_LOG=yes \
