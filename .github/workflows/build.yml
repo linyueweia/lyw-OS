@@ -1,0 +1,145 @@
+name: Build iNextOS for LYT T68M
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: Build iNextOS image (LYT T68M / RK3568)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    steps:
+      - name: Checkout board adaptation
+        uses: actions/checkout@v4
+        with:
+          path: t68m
+
+      - name: Checkout iNextOS build framework (armbian-easepi)
+        uses: actions/checkout@v4
+        with:
+          repository: jjm2473/armbian-easepi
+          ref: easepi-v26.02
+          path: build
+
+      - name: Inject LYT T68M board support
+        run: |
+          set -e
+          cp -v t68m/config/boards/lyt-t68m.csc build/config/boards/
+          mkdir -p build/patch/kernel/rk35xx-vendor-6.1/dt
+          cp -v t68m/patch/kernel/rk35xx-vendor-6.1/dt/rk3568-lyt-t68m.dts \
+                build/patch/kernel/rk35xx-vendor-6.1/dt/
+          echo "--- board config (lyt-t68m.csc):"
+          cat build/config/boards/lyt-t68m.csc
+          echo "--- dts head:"
+          head -20 build/patch/kernel/rk35xx-vendor-6.1/dt/rk3568-lyt-t68m.dts
+          echo "--- dts critical markers:"
+          grep -nE '&pcie2x1|&sata2|&sdmmc2|lyt,t68m' \
+                build/patch/kernel/rk35xx-vendor-6.1/dt/rk3568-lyt-t68m.dts || true
+
+      - name: Set up QEMU (binfmt_misc for arm64 cross-build)
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64,arm
+
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          sudo apt-get clean
+          df -h /
+
+      - name: Build iNextOS image
+        run: |
+          cd build
+          ./compile.sh build \
+            BOARD=lyt-t68m \
+            BRANCH=vendor \
+            RELEASE=trixie \
+            BUILD_MINIMAL=yes \
+            BUILD_DESKTOP=no \
+            KERNEL_CONFIGURE=no \
+            CLEAN_LEVEL="" \
+            SHOW_LOG=yes
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Post-process image (bootloader / DTB / armbianEnv / extlinux)
+        run: |
+          set -e
+          IMG=$(ls build/output/images/*.img | head -n1)
+          [ -n "$IMG" ] || { echo "!! output image not found"; exit 1; }
+          echo "target image: $IMG"; ls -lh "$IMG"
+
+          LOOP=$(sudo losetup -f --show -P "$IMG")
+          echo "loop: $LOOP"
+
+          # (1) T68M verified bootloader blobs -> raw area (32KiB / 8MiB)
+          #     These are the exact blobs already proven to boot on T68M.
+          sudo dd if=t68m/kernel-files/idbloader.img of="$LOOP" bs=512 seek=64   conv=notrunc status=none
+          sudo dd if=t68m/kernel-files/u-boot.itb   of="$LOOP" bs=512 seek=16384 conv=notrunc status=none
+          echo "--- bootloader written; verify FIT magic @8MiB:"
+          sudo dd if="$LOOP" bs=1 skip=$((8*1024*1024)) count=4 status=none | xxd | head -1
+
+          sudo mkdir -p /mnt/ib
+          sudo mount ${LOOP}p1 /mnt/ib
+
+          # (2) our verified DTB
+          sudo mkdir -p /mnt/ib/dtb/rockchip
+          sudo cp -fv t68m/kernel-files/rk3568-lyt-t68m.dtb /mnt/ib/dtb/rockchip/
+
+          # (3) armbianEnv.txt (fdtfile is the single board switch)
+          ROOT_UUID=$(sudo blkid -s UUID -o value ${LOOP}p2)
+          echo "rootfs UUID: $ROOT_UUID"
+          sudo tee /mnt/ib/armbianEnv.txt >/dev/null <<EOF
+verbosity=1
+bootlogo=false
+console=both
+extraargs=cma=256M
+overlay_prefix=rk35xx
+fdtfile=rockchip/rk3568-lyt-t68m.dtb
+rootdev=UUID=${ROOT_UUID}
+rootfstype=ext4
+EOF
+
+          # (4) extlinux.conf as a second, bootstd-native entry point
+          KERNEL_NAME=$(basename "$(ls /mnt/ib/Image)" 2>/dev/null || echo Image)
+          sudo mkdir -p /mnt/ib/extlinux
+          sudo tee /mnt/ib/extlinux/extlinux.conf >/dev/null <<EOF
+label iNextOS
+    kernel /${KERNEL_NAME}
+    fdt /dtb/rockchip/rk3568-lyt-t68m.dtb
+    append console=ttyS2,1500000 earlycon=uart8250,mmio32,0xfe660000 root=UUID=${ROOT_UUID} rw rootwait cma=256M
+EOF
+
+          echo "--- armbianEnv.txt ---"; cat /mnt/ib/armbianEnv.txt
+          echo "--- extlinux/extlinux.conf ---"; cat /mnt/ib/extlinux/extlinux.conf
+          echo "--- DTB ---"; ls -l /mnt/ib/dtb/rockchip/rk3568-lyt-t68m.dtb
+          md5sum /mnt/ib/dtb/rockchip/rk3568-lyt-t68m.dtb
+
+          sync
+          sudo umount /mnt/ib
+          sudo losetup -d "$LOOP"
+
+          if [ -f "${IMG}.xz" ]; then
+            echo "re-compressing..."; rm -f "${IMG}.xz"; xz -T0 "${IMG}"; ls -lh "${IMG}.xz"
+          fi
+
+      - name: Show outputs
+        if: always()
+        run: |
+          echo "=== output tree ==="
+          find build/output -maxdepth 3 -type f 2>/dev/null | head -50 || true
+
+      - name: Upload iNextOS artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: inextos-lyt-t68m
+          path: |
+            build/output/images/*.img
+            build/output/images/*.img.xz
+            build/output/images/*.sha
+            build/output/debs/*.deb
+          if-no-files-found: warn
+          retention-days: 14
