@@ -24,14 +24,20 @@ function post_family_tweaks__lyt_t68m_hold_dtb() {
 }
 
 function post_family_tweaks__lyt_t68m_network_interfaces() {
-	display_alert "$BOARD" "Setting T68M eth_order and default network interface" "info"
+	display_alert "$BOARD" "Renaming LYT T68M network interfaces to eth0-3" "info"
 
-	# iNextOS 官方机制：/etc/eth_order + fix-ifaces-name.service 负责把网口按顺序
-	# 重命名为 eth0..N，因此这里不再写 udev 规则（会与 fix-ifaces-name 冲突）。
-	echo "fe2a0000.ethernet,fe010000.ethernet,0002:21:00.0,0001:11:00.0" > "${SDCARD}/etc/eth_order"
+	# 与官方 easepi-r1.csc 保持一致：udev 规则与 /etc/eth_order 并用
+	# （udev 在设备出现时改名；fix-ifaces-name.service 再按 eth_order 校正一次）
+	mkdir -p "${SDCARD}/etc/udev/rules.d/"
+	cat <<- EOF > "${SDCARD}/etc/udev/rules.d/70-persistent-net.rules"
+		SUBSYSTEM=="net", ACTION=="add", KERNELS=="fe2a0000.ethernet", NAME:="eth0"
+		SUBSYSTEM=="net", ACTION=="add", KERNELS=="fe010000.ethernet", NAME:="eth1"
+		SUBSYSTEM=="net", ACTION=="add", KERNELS=="0002:21:00.0", NAME:="eth2"
+		SUBSYSTEM=="net", ACTION=="add", KERNELS=="0001:11:00.0", NAME:="eth3"
+	EOF
 
-	# 首启静态管理口：istorenext-init-network.service 会读它并生成 /etc/network/interfaces
 	echo "DEFAULT_INTERFACE=eth0" > "${SDCARD}/root/.default-network"
+	echo "fe2a0000.ethernet,fe010000.ethernet,0002:21:00.0,0001:11:00.0" > "${SDCARD}/etc/eth_order"
 	return 0
 }
 
