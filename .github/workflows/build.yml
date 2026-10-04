@@ -56,12 +56,13 @@ jobs:
             BOARD=lyt-t68m \
             BRANCH=vendor \
             RELEASE=trixie \
-            VENDOR=iNextOSA \
-            BUILD_MINIMAL=yes \
+            ENABLE_EXTENSIONS="istorenext" \
+            BUILD_MINIMAL=no \
             BUILD_DESKTOP=no \
             KERNEL_CONFIGURE=no \
-            CLEAN_LEVEL="" \
-            SHOW_LOG=yes
+            COMPRESS_OUTPUTIMAGE="sha,img,xz" \
+            SHARE_LOG=yes \
+            EXPERT=yes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
