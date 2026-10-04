@@ -38,3 +38,12 @@ function post_family_tweaks__lyt_t68m_network_interfaces() {
 	echo "fe2a0000.ethernet,fe010000.ethernet,0002:21:00.0,0001:11:00.0" > "${SDCARD}/etc/eth_order"
 	return 0
 }
+
+function post_family_tweaks__lyt_t68m_hostname() {
+	display_alert "$BOARD" "Setting hostname to iNextOS" "info"
+	echo "iNextOS" > "${SDCARD}/etc/hostname"
+	if [ -f "${SDCARD}/etc/hosts" ]; then
+		sed -i "s/^127\.0\.1\.1.*/127.0.1.1\tiNextOS/" "${SDCARD}/etc/hosts" || true
+	fi
+	return 0
+}

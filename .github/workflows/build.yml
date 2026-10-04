@@ -56,6 +56,7 @@ jobs:
             BOARD=lyt-t68m \
             BRANCH=vendor \
             RELEASE=trixie \
+            VENDOR=iNextOSA \
             BUILD_MINIMAL=yes \
             BUILD_DESKTOP=no \
             KERNEL_CONFIGURE=no \

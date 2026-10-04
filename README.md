@@ -5,6 +5,16 @@
 基于 **jjm2473/armbian-easepi**（branch `easepi-v26.02`，即 iNextOS 的构建框架），
 用 GitHub Actions 云编译产出可直接刷写的 `.img` / `.img.xz`。
 
+## 仓库性质与来源说明（重要，勿混淆）
+
+| 名称 | 性质 |
+|---|---|
+| **iNextOS / iStoreNext** | iStoreOS 团队出品的「路由+存储」系统；**官方镜像由 KoolCenter 酷友社发布**（https://www.koolcenter.com/t/topic/13495 ）。官方支持机型为 EasePi R1/R2、Hinlink H88K 等，**LYT T68M 不在官方支持列表内** |
+| **`jjm2473/armbian-easepi`** | iNextOS 的 **ARM 构建框架**（fork of `armbian/build`，branch `easepi-v26.02`），由 iStoreOS/LinkEase 团队开发者 **jjm2473（Liangbin Lian）** 维护，也是社区编译 EasePi / NanoPi R5S 等 iNextOS 固件所依赖的事实标准。**它不是 iNextOS 官方的发行仓库** |
+| **本仓库 `linyueweia/lyt-t68m-inextos`** | **第三方板级适配仓库**：为 T68M 增加 board conf + 板级 DTS，并调用上面的构建框架云编译。**非官方** |
+
+即：本仓库 = 「T68M 板级适配层」，真正的系统构建由 `jjm2473/armbian-easepi` 完成。
+
 ## 与 EasePi R1 的差异（不可照搬）
 
 | 项 | LYT T68M | EasePi R1 |
