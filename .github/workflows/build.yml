@@ -38,6 +38,20 @@ jobs:
           grep -nE '&pcie2x1|&sata2|&sdmmc2|lyt,t68m' \
                 build/patch/kernel/rk35xx-vendor-6.1/dt/rk3568-lyt-t68m.dts || true
 
+          # 升级 rk3568 的 DDR 初始化固件（这是修"完全无输出"的关键一步）。
+          # 框架默认：rk35/rk3568_ddr_1560MHz_v1.21.bin
+          #   → 已在构建产物里逐字节确认；该固件在 T68M 上 DDR 训练失败，
+          #     而失败发生在串口初始化之前，故表现为上电后串口/HDMI 完全无输出。
+          # armbian/rkbin 里 rk3568 可用的最新版本为 v1.23（1056MHz 档）：
+          #   → 版本更新（新训练代码）+ 频率更保守（1056MHz），两者都指向能过训练。
+          DDRINC=build/config/sources/families/include/rockchip64_common.inc
+          n_before=$(grep -c 'rk3568_ddr_1560MHz_v1.21.bin' "$DDRINC" || true)
+          sed -i 's#rk35/rk3568_ddr_1560MHz_v1.21.bin#rk35/rk3568_ddr_1056MHz_v1.23.bin#' "$DDRINC"
+          n_after=$(grep -c 'rk35/rk3568_ddr_1056MHz_v1.23.bin' "$DDRINC" || true)
+          echo "--- DDR 固件替换: 替换前命中 v1.21 行数=$n_before, 替换后 v1.23 行数=$n_after"
+          [ "$n_after" -ge 1 ] || { echo "!! DDR 固件替换失败"; exit 1; }
+          grep -n 'rk3568_ddr' "$DDRINC" | sed 's/^/    /'
+
       - name: Set up QEMU (binfmt_misc for arm64 cross-build)
         uses: docker/setup-qemu-action@v3
         with:
@@ -73,23 +87,29 @@ jobs:
           [ -n "$IMG" ] || { echo "!! output image not found"; exit 1; }
           echo "target image: $IMG"; ls -lh "$IMG"
 
-          # (0) 引导件：用 **T68M 厂商签名引导件** 覆盖 armbian 自编译的那一份。
-          #     原因（已逐字节证实）：armbian 按 radxa-e25 的板级配置编译 U-Boot，
-          #     其 DDR/内存初始化参数取自 E25 的设备树，在 T68M 上 DDR 训练失败 ——
-          #     失败发生在串口初始化之前，所以表现为"上电后一个字都没有"。
-          #     官方 iStoreOS 的 T68M 镜像里那份引导件（RKNS 封装，DDR fw v1.23）
-          #     是经本机实测可用的，这里原样写入 32KiB / 8MiB 两个固定偏移。
-          #     注意：只替换引导装载件，内核/DTB/根文件系统仍用 armbian 构建产物。
-          echo "--- (0) 注入 T68M 厂商引导件（替换 armbian 的 e25 引导件）---"
-          test -f t68m/kernel-files/t68m-boot-a.bin || { echo "!! 缺少 t68m-boot-a.bin"; exit 1; }
-          test -f t68m/kernel-files/t68m-boot-b.bin || { echo "!! 缺少 t68m-boot-b.bin"; exit 1; }
-          sudo dd if=t68m/kernel-files/t68m-boot-a.bin of="$IMG" bs=512 seek=64 conv=notrunc,fsync status=none
-          sudo dd if=t68m/kernel-files/t68m-boot-b.bin of="$IMG" bs=512 seek=16384 conv=notrunc,fsync status=none
-          echo "  写入 ddr+spl @32KiB : sha256=$(sha256sum t68m/kernel-files/t68m-boot-a.bin | cut -c1-16)"
-          echo "  写入 u-boot  @8MiB  : sha256=$(sha256sum t68m/kernel-files/t68m-boot-b.bin | cut -c1-16)"
-          echo "  回读校验（应为 RKNS 与 FIT 魔数）:"
-          sudo dd if="$IMG" bs=1 skip=$((0x8000)) count=8 status=none | xxd | head -1
-          sudo dd if="$IMG" bs=1 skip=$((0x800000)) count=4 status=none | xxd | head -1
+          # (0) 引导件来源校验：确认 idbloader 内嵌的 DDR 固件确实是升级后的版本。
+          #     背景：框架 rockchip64_common.inc 默认 rk3568 用 rkbin 的
+          #     rk3568_ddr_1560MHz_v1.21.bin —— 该版本在 T68M 上 DDR 训练失败
+          #     （失败早于串口初始化，故表现为"上电后串口/HDMI 无任何输出"）。
+          #     本工作流在构建前把默认值改为 v1.23（1056MHz），此处回读镜像自证。
+          echo "--- (0) 校验镜像内嵌 DDR 固件 ---"
+          sudo python3 - "$IMG" <<'PYEOF'
+          import sys, pathlib
+          img = pathlib.Path(sys.argv[1]).read_bytes()[:0x36000]
+          hits = []
+          for f in sorted(pathlib.Path('build/cache/sources/rkbin-tools/rk35').glob('rk3568_ddr_*.bin')):
+              blob = f.read_bytes()
+              off = img.find(blob)
+              if off >= 0:
+                  hits.append((f.name, off, len(blob)))
+          for name, off, n in hits:
+              print(f"  命中 {name} @ {hex(off)} ({n} 字节)")
+          if not hits:
+              sys.exit("  !! 镜像引导区内未找到任何已知 DDR 固件")
+          if not any('v1.23' in h[0] for h in hits):
+              sys.exit("  !! DDR 固件不是 v1.23，升级未生效")
+          print("  ✅ DDR 固件升级已生效")
+          PYEOF
 
           LOOP=$(sudo losetup -f --show -P "$IMG")
           echo "loop: $LOOP"

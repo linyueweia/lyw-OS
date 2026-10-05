@@ -64,33 +64,33 @@ BootROM → idbloader.img @32KiB → u-boot.itb @8MiB
 
 `armbianEnv.txt` 里 **`fdtfile=rockchip/rk3568-lyt-t68m.dtb` 就是唯一的换板开关**。
 
-### 为什么必须覆盖引导件（2026-10 定位）
+### 为什么必须升级 DDR 固件（2026-10 定位）
 
-armbian 按 `BOOTCONFIG="radxa-e25-rk3568_defconfig"` + `BOOT_SCENARIO="spl-blobs"`
-编译 U-Boot，其 **DDR/内存初始化参数取自 Radxa E25 的板级设备树**。该参数在 E25 与
-EasePi R1 上可用，但在 **T68M 上 DDR 训练失败** —— 失败发生在串口初始化之前，
-因此现象是「上电后串口与 HDMI 完全没有输出」，且 TF 卡 / eMMC 都一样。
+armbian 框架 `config/sources/families/include/rockchip64_common.inc` 里，rk3568 的
+DDR 初始化固件是写死的默认值：
 
-证据（逐字节比对官方镜像是本仓库的方法论）：
+    DDR_BLOB="${DDR_BLOB:-"rk35/rk3568_ddr_1560MHz_v1.21.bin"}"
+
+**该文件已在本仓库构建产物中逐字节命中确认**（位于镜像偏移 `0x8800`）。v1.21 在 E25 /
+EasePi R1 上可用，但在 **T68M 上 DDR 训练失败** —— 而训练发生在串口初始化之前，
+所以现象是「上电后串口与 HDMI 完全没有任何输出」，且 TF 卡 / eMMC 表现完全一致。
+
+证据链：
 
 | 比对对象 | 结果 |
 |---|---|
-| 本仓库构建产物 vs 官方 iNextOS R1 镜像 | 引导区前 16MiB 仅差 196 字节，`boot.cmd` 完全一致 → **构建内容本身无问题** |
-| 官方 iStoreOS T68M 镜像里的引导件 | 是厂商签名件（`RKNS` 封装，内含 `DDR … fwver: v1.23`），**已在本机实测可用** |
+| 本仓库产物 vs 官方 iNextOS R1 镜像 | 引导区前 16MiB 仅差 196 字节（全部是构建日期字符串及其校验摘要），`boot.cmd` 一字不差 → **构建内容本身没有问题** |
+| 产物内嵌的 DDR 固件 | 与 `armbian/rkbin` 的 `rk3568_ddr_1560MHz_v1.21.bin` **逐字节一致**（@0x8800） |
+| 官方 iStoreOS 的 T68M 镜像 | 用 **v1.23**（内含 `ddr-v1.23-03ea844c5d`）→ 该板实测可启动 |
 
-因此 CI 在构建后把厂商引导件写入两个固定偏移（只换引导装载件，内核/DTB/rootfs 仍用
-armbian 产物）：
+所以本工作流在**编译前**把框架默认值替换为 `rk35/rk3568_ddr_1056MHz_v1.23.bin`
+（`armbian/rkbin` 里 rk3568 可用的最新版本，频率更保守），并在构建后**回读镜像自证**：
+idbloader 内必须能命中 v1.23，否则该步骤直接失败。
 
-```bash
-dd if=t68m-boot-a.bin of=$IMG bs=512 seek=64    conv=notrunc   # 32KiB：RKNS(ddr fw + SPL)
-dd if=t68m-boot-b.bin of=$IMG bs=512 seek=16384 conv=notrunc   # 8MiB ：U-Boot FIT(含 ATF/BL31)
-```
-
-> `kernel-files/t68m-boot-{a,b}.bin` 提取自官方 iStoreOS T68M 镜像的 `0x8000..0x36000`
-> 与 `0x800000` 起（尾部填充已裁掉）。两者合计 1.2MB，落点均在第一分区起点（16MiB）之前。
->
-> 旧版曾放入的 `idbloader.img` / `u-boot.itb` 经查**是 NanoPi R5S 的**（内嵌
-> `rk3568-nanopi-r5s.dtb`），已移除 —— 那正是早先"注入引导件无效"的原因。
+> 早期版本曾尝试"构建后用厂商引导件 dd 进镜像"，已废弃 —— 正确做法是让 armbian 自己
+> 用新固件编出 `idbloader.img` / `u-boot.itb`，而不是事后替换二进制。
+> 另外，旧版放入的 `kernel-files/idbloader.img` 与 `u-boot.itb` 经查是 **NanoPi R5S**
+> 的（内嵌 `rk3568-nanopi-r5s.dtb`），也正是早先"注入引导件无效"的原因，已删除。
 
 ## 使用
 
