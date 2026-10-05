@@ -73,13 +73,29 @@ jobs:
           [ -n "$IMG" ] || { echo "!! output image not found"; exit 1; }
           echo "target image: $IMG"; ls -lh "$IMG"
 
+          # (0) 引导件：用 **T68M 厂商签名引导件** 覆盖 armbian 自编译的那一份。
+          #     原因（已逐字节证实）：armbian 按 radxa-e25 的板级配置编译 U-Boot，
+          #     其 DDR/内存初始化参数取自 E25 的设备树，在 T68M 上 DDR 训练失败 ——
+          #     失败发生在串口初始化之前，所以表现为"上电后一个字都没有"。
+          #     官方 iStoreOS 的 T68M 镜像里那份引导件（RKNS 封装，DDR fw v1.23）
+          #     是经本机实测可用的，这里原样写入 32KiB / 8MiB 两个固定偏移。
+          #     注意：只替换引导装载件，内核/DTB/根文件系统仍用 armbian 构建产物。
+          echo "--- (0) 注入 T68M 厂商引导件（替换 armbian 的 e25 引导件）---"
+          test -f t68m/kernel-files/t68m-boot-a.bin || { echo "!! 缺少 t68m-boot-a.bin"; exit 1; }
+          test -f t68m/kernel-files/t68m-boot-b.bin || { echo "!! 缺少 t68m-boot-b.bin"; exit 1; }
+          sudo dd if=t68m/kernel-files/t68m-boot-a.bin of="$IMG" bs=512 seek=64 conv=notrunc,fsync status=none
+          sudo dd if=t68m/kernel-files/t68m-boot-b.bin of="$IMG" bs=512 seek=16384 conv=notrunc,fsync status=none
+          echo "  写入 ddr+spl @32KiB : sha256=$(sha256sum t68m/kernel-files/t68m-boot-a.bin | cut -c1-16)"
+          echo "  写入 u-boot  @8MiB  : sha256=$(sha256sum t68m/kernel-files/t68m-boot-b.bin | cut -c1-16)"
+          echo "  回读校验（应为 RKNS 与 FIT 魔数）:"
+          sudo dd if="$IMG" bs=1 skip=$((0x8000)) count=8 status=none | xxd | head -1
+          sudo dd if="$IMG" bs=1 skip=$((0x800000)) count=4 status=none | xxd | head -1
+
           LOOP=$(sudo losetup -f --show -P "$IMG")
           echo "loop: $LOOP"
 
-          # (1) bootloader: 使用 armbian 自己编译的通用 U-Boot（iNextOS 官方方案）
-          #     BOOT_SCENARIO=spl-blobs + BOOTCONFIG=radxa-e25-rk3568_defconfig
-          #     不再注入外部 bootloader blobs（原先注入的是 R5S 通用 U-Boot，内嵌 DTB 为 NanoPi R5S）
-          echo "--- verify armbian-built U-Boot FIT magic @8MiB:"
+          # (1) bootloader 已在 (0) 处替换为 T68M 厂商引导件；此处仅回读校验魔数。
+          echo "--- verify injected U-Boot FIT magic @8MiB:"
           sudo dd if="$LOOP" bs=1 skip=$((8*1024*1024)) count=4 status=none | xxd | head -1
 
           sudo mkdir -p /mnt/ib

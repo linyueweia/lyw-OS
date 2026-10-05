@@ -56,15 +56,41 @@
 
 ```
 BootROM → idbloader.img @32KiB → u-boot.itb @8MiB
-          （由 armbian 以 BOOT_SCENARIO="spl-blobs" + BOOTCONFIG="radxa-e25-rk3568_defconfig"
-            编译的通用 U-Boot —— 即 iNextOS 官方方案；不再注入外部 bootloader blobs）
+          ⚠️ 这两段由 CI 在构建后**用 T68M 厂商签名引导件覆盖**（见下）
         → bootcmd = bootflow scan -lb              (boot_targets = mmc1(TF) mmc0(eMMC) …)
         → 引导分区(p1, FAT16 "armbi_boot") 上的 boot.scr（armbian 标准）
-          以及 extlinux/extlinux.conf（本仓库额外放置，作为 bootstd 原生入口的双保险）
         → Image + rk3568-lyt-t68m.dtb → booti
 ```
 
 `armbianEnv.txt` 里 **`fdtfile=rockchip/rk3568-lyt-t68m.dtb` 就是唯一的换板开关**。
+
+### 为什么必须覆盖引导件（2026-10 定位）
+
+armbian 按 `BOOTCONFIG="radxa-e25-rk3568_defconfig"` + `BOOT_SCENARIO="spl-blobs"`
+编译 U-Boot，其 **DDR/内存初始化参数取自 Radxa E25 的板级设备树**。该参数在 E25 与
+EasePi R1 上可用，但在 **T68M 上 DDR 训练失败** —— 失败发生在串口初始化之前，
+因此现象是「上电后串口与 HDMI 完全没有输出」，且 TF 卡 / eMMC 都一样。
+
+证据（逐字节比对官方镜像是本仓库的方法论）：
+
+| 比对对象 | 结果 |
+|---|---|
+| 本仓库构建产物 vs 官方 iNextOS R1 镜像 | 引导区前 16MiB 仅差 196 字节，`boot.cmd` 完全一致 → **构建内容本身无问题** |
+| 官方 iStoreOS T68M 镜像里的引导件 | 是厂商签名件（`RKNS` 封装，内含 `DDR … fwver: v1.23`），**已在本机实测可用** |
+
+因此 CI 在构建后把厂商引导件写入两个固定偏移（只换引导装载件，内核/DTB/rootfs 仍用
+armbian 产物）：
+
+```bash
+dd if=t68m-boot-a.bin of=$IMG bs=512 seek=64    conv=notrunc   # 32KiB：RKNS(ddr fw + SPL)
+dd if=t68m-boot-b.bin of=$IMG bs=512 seek=16384 conv=notrunc   # 8MiB ：U-Boot FIT(含 ATF/BL31)
+```
+
+> `kernel-files/t68m-boot-{a,b}.bin` 提取自官方 iStoreOS T68M 镜像的 `0x8000..0x36000`
+> 与 `0x800000` 起（尾部填充已裁掉）。两者合计 1.2MB，落点均在第一分区起点（16MiB）之前。
+>
+> 旧版曾放入的 `idbloader.img` / `u-boot.itb` 经查**是 NanoPi R5S 的**（内嵌
+> `rk3568-nanopi-r5s.dtb`），已移除 —— 那正是早先"注入引导件无效"的原因。
 
 ## 使用
 
