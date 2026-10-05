@@ -195,13 +195,17 @@ jobs:
           sudo losetup -d "$LOOP"
 
           if [ -f "${IMG}.xz" ]; then
+            # 注意顺序：xz 压缩成功后**会删除原始 .img**，所以必须是
+            # 「先算 .img 校验 → 再压缩 → 最后算 .xz 校验」。
+            # 上一版把 .img 的 sha256 放在压缩之后执行，导致 "No such file or directory"。
+            IMGDIR="$(cd "$(dirname "${IMG}")" && pwd)"; IMGBASE="$(basename "${IMG}")"
+            echo "--- 先按当前内容重算 .img 校验（镜像被改动过，armbian 原值可能已过期）"
+            sudo sh -c "cd '${IMGDIR}' && sha256sum '${IMGBASE}' > '${IMGBASE}.sha'"
             echo "re-compressing..."; rm -f "${IMG}.xz"; sudo xz -T0 "${IMG}"; ls -lh "${IMG}.xz"
-            # 重压缩会产生新的 .xz，armbian 原先算好的 .xz 校验随即失效。
-            # 必须重算校验文件，否则下载方对照 .sha 会误判为"文件损坏"。
-            IMGDIR="$(dirname "${IMG}")"; IMGBASE="$(basename "${IMG}")"
-            sudo sh -c "cd '${IMGDIR}' && sha256sum '${IMGBASE}' '${IMGBASE}.xz' > '${IMGBASE}.sha' && sha256sum '${IMGBASE}.xz' > '${IMGBASE}.xz.sha'"
-            echo "--- 校验文件已重算:"
-            cat "${IMG}.sha" "${IMG}.xz.sha"
+            echo "--- 压缩后重算 .xz 校验"
+            sudo sh -c "cd '${IMGDIR}' && sha256sum '${IMGBASE}.xz' > '${IMGBASE}.xz.sha'"
+            echo "--- 最终校验文件:"
+            sudo sh -c "cat '${IMGDIR}/${IMGBASE}.sha' '${IMGDIR}/${IMGBASE}.xz.sha'"
           fi
 
       - name: Show outputs
