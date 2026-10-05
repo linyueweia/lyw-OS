@@ -802,3 +802,78 @@
 	vqmmc-supply = <&vcc_1v8>;
 	status = "okay";
 };
+
+/* ══════════════════════════════════════════════════════════════════
+ * 补齐 SoC IP 块使能（原文件缺失，导致半块 SoC 能力被关掉）
+ *
+ * 背景：本文件源自 immortalwrt 的板级 DTS，只 #include 了 rk3568.dtsi；
+ * 而 armbian 官方板级（如 EasePi R1）的做法是继承完整基线
+ * rk3568-roc-k40pro.dtsi —— 那些 IP 块是在基线里逐个开启的。
+ * 缺失后果：视频硬编解码（jellyfin-ffmpeg/rkmpp）不可用、RGA/IEP/JPEG
+ * 图像加速不可用、硬件随机数不可用、DDR 调频监控(dfi)不可用。
+ *
+ * 以下各块**照抄官方基线 rk3568-roc-k40pro.dtsi 的原文**（同一内核树，
+ * 标签必然存在）。刻意保持一致的两项：
+ *   - dmc：官方基线里就是 disabled（不开 DDR 调频），此处不动
+ *   - npu：厂商出厂 T68M 设备树里亦为 disabled，此处同样保持关闭
+ * ══════════════════════════════════════════════════════════════════ */
+&dfi {
+	status = "okay";
+};
+
+&iep {
+	status = "okay";
+};
+
+&iep_mmu {
+	status = "okay";
+};
+
+&jpegd {
+	status = "okay";
+};
+
+&jpegd_mmu {
+	status = "okay";
+};
+
+&rk_rga {
+	status = "okay";
+};
+
+&rkvdec {
+	status = "okay";
+};
+
+&rkvdec_mmu {
+	status = "okay";
+};
+
+&rkvenc {
+	venc-supply = <&vdd_logic>;
+	status = "okay";
+};
+
+&rkvenc_mmu {
+	status = "okay";
+};
+
+&rng {
+	status = "okay";
+};
+
+&vdpu {
+	status = "okay";
+};
+
+&vdpu_mmu {
+	status = "okay";
+};
+
+&vepu {
+	status = "okay";
+};
+
+&vepu_mmu {
+	status = "okay";
+};

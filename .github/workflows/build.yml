@@ -94,23 +94,32 @@ jobs:
           #     本工作流在构建前把默认值改为 v1.23（1056MHz），此处回读镜像自证。
           echo "--- (0) 校验镜像内嵌 DDR 固件 ---"
           sudo python3 - "$IMG" <<'PYEOF'
-          import sys
-          with open(sys.argv[1], 'rb') as fh:      # 只读引导区前 0x36000 字节
-              img = fh.read(0x36000)
-          import pathlib
+          import sys, hashlib, pathlib
+          # 真机（T68M eMMC 实测提取）与厂商 iStoreOS 镜像内嵌的 DDR 固件，
+          # 与 armbian/rkbin 的 rk3568_ddr_1056MHz_v1.23.bin 逐字节相同。
+          # 该 sha256 取自官方 rkbin 仓库的同一文件，此处做精确指纹断言。
+          EXPECT = '20e4bb076847bd019fcdeb7bdc15bd249890f07ecc76e9937101f22e50950982'
+          with open(sys.argv[1], 'rb') as fh:
+              fh.seek(0x8000)
+              region = fh.read(0x36000 - 0x8000)      # 只读引导区，避免读入整个镜像
           hits = []
           for f in sorted(pathlib.Path('build/cache/sources/rkbin-tools/rk35').glob('rk3568_ddr_*.bin')):
               blob = f.read_bytes()
-              off = img.find(blob)
+              off = region.find(blob)
               if off >= 0:
                   hits.append((f.name, off, len(blob)))
           for name, off, n in hits:
-              print(f"  命中 {name} @ {hex(off)} ({n} 字节)")
+              print(f"  命中 {name} @ {hex(0x8000 + off)} ({n} 字节)")
           if not hits:
               sys.exit("  !! 镜像引导区内未找到任何已知 DDR 固件")
-          if not any('v1.23' in h[0] for h in hits):
-              sys.exit("  !! DDR 固件不是 v1.23，升级未生效")
-          print("  ✅ DDR 固件升级已生效")
+          if not any(h[0].startswith('rk3568_ddr_1056MHz_v1.23') for h in hits):
+              sys.exit("  !! DDR 固件不是 rk3568_ddr_1056MHz_v1.23，升级未生效")
+          name, off, n = [h for h in hits if h[0].startswith('rk3568_ddr_1056MHz_v1.23')][0]
+          got = hashlib.sha256(region[off:off + n]).hexdigest()
+          print(f"  内嵌固件 sha256 = {got[:32]}…")
+          if got != EXPECT:
+              sys.exit("  !! 内嵌 DDR 固件与真机同款固件指纹不一致")
+          print("  ✅ DDR 固件 = 真机 eMMC 同款（rk3568_ddr_1056MHz_v1.23.bin）")
           PYEOF
 
           LOOP=$(sudo losetup -f --show -P "$IMG")
@@ -138,6 +147,25 @@ jobs:
           fi
           ls -l /mnt/ib/dtb/rockchip/rk3568-lyt-t68m.dtb
           md5sum /mnt/ib/dtb/rockchip/rk3568-lyt-t68m.dtb
+
+          # (2b) 设备树自证：SoC IP 块必须已使能。
+          #      板级 DTS 源自 immortalwrt，只 include 了 rk3568.dtsi；这些 IP 块
+          #      默认是关的，必须显式开启（官方 R1 通过继承完整基线获得）。
+          #      缺了它们，视频硬编解码（jellyfin-ffmpeg/rkmpp）、RGA/IEP/JPEG、
+          #      硬件随机数在系统里都不可用。
+          echo "--- (2b) 校验 T68M DTB 的 SoC IP 块使能 ---"
+          sudo apt-get install -y -qq device-tree-compiler >/dev/null 2>&1 || true
+          DT=/mnt/ib/dtb/rockchip/rk3568-lyt-t68m.dtb
+          dtfail=0
+          for p in /vdpu@fdea0400 /vepu@fdee0000 /rkvdec@fdf80200 /rkvenc@fdf40000 \
+                   /rk_rga@fdeb0000 /iep@fdef0000 /jpegd@fded0000 /rng@fe388000 \
+                   /iommu@fdea0800 /iommu@fdf40f00 /iommu@fdf80800; do
+            st=$(sudo fdtget -t s "$DT" "$p" status 2>/dev/null || echo MISSING)
+            printf "    %-26s %s\n" "$(basename $p)" "$st"
+            [ "$st" = "okay" ] || dtfail=1
+          done
+          [ "$dtfail" = 0 ] || { echo "!! 设备树 IP 块未全部使能（DTS 未生效？）"; exit 1; }
+          echo "    ✅ SoC IP 块使能校验通过"
 
           # (3) armbianEnv.txt: keep armbian's own file (it has overlays,
           #     usbstoragequirks, etc). Only append what is missing; never overwrite.

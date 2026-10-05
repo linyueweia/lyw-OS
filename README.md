@@ -75,22 +75,45 @@ DDR 初始化固件是写死的默认值：
 EasePi R1 上可用，但在 **T68M 上 DDR 训练失败** —— 而训练发生在串口初始化之前，
 所以现象是「上电后串口与 HDMI 完全没有任何输出」，且 TF 卡 / eMMC 表现完全一致。
 
-证据链：
+证据链（三方独立来源，互相印证）：
 
 | 比对对象 | 结果 |
 |---|---|
 | 本仓库产物 vs 官方 iNextOS R1 镜像 | 引导区前 16MiB 仅差 196 字节（全部是构建日期字符串及其校验摘要），`boot.cmd` 一字不差 → **构建内容本身没有问题** |
 | 产物内嵌的 DDR 固件 | 与 `armbian/rkbin` 的 `rk3568_ddr_1560MHz_v1.21.bin` **逐字节一致**（@0x8800） |
-| 官方 iStoreOS 的 T68M 镜像 | 用 **v1.23**（内含 `ddr-v1.23-03ea844c5d`）→ 该板实测可启动 |
+| 官方 iStoreOS 的 T68M 镜像 | 用 **v1.23**（内含 `ddr-v1.23-03ea844c5d`） |
+| **真机 T68M eMMC 前 16MB 实测提取** | DDR 固件 = `ddr-v1.23-03ea844c5d 24/09/03-10:42:57`，与 `armbian/rkbin` 的 **`rk3568_ddr_1056MHz_v1.23.bin` 59392 字节逐字节 100% 相同**（sha256 `20e4bb07…`） |
 
-所以本工作流在**编译前**把框架默认值替换为 `rk35/rk3568_ddr_1056MHz_v1.23.bin`
-（`armbian/rkbin` 里 rk3568 可用的最新版本，频率更保守），并在构建后**回读镜像自证**：
-idbloader 内必须能命中 v1.23，否则该步骤直接失败。
+最后一条是决定性的：**本工作流改用的这份 v1.23，就是这块板子 eMMC 里此刻正在运行的固件本身**（连频率档位 1056MHz 都一致），而不是"另一个更新的版本"。
+
+因此本工作流在**编译前**把框架默认值替换为 `rk35/rk3568_ddr_1056MHz_v1.23.bin`，
+并在构建后**回读镜像自证**：内嵌固件必须命中该文件且 sha256 完全一致，否则该步骤失败。
 
 > 早期版本曾尝试"构建后用厂商引导件 dd 进镜像"，已废弃 —— 正确做法是让 armbian 自己
 > 用新固件编出 `idbloader.img` / `u-boot.itb`，而不是事后替换二进制。
 > 另外，旧版放入的 `kernel-files/idbloader.img` 与 `u-boot.itb` 经查是 **NanoPi R5S**
 > 的（内嵌 `rk3568-nanopi-r5s.dtb`），也正是早先"注入引导件无效"的原因，已删除。
+
+### 板级设备树补齐 SoC IP 块（2026-10）
+
+板级 DTS 源自 immortalwrt，只 `#include "rk3568.dtsi"`；而 armbian 官方板级
+（如 EasePi R1）是继承完整基线 `rk3568-roc-k40pro.dtsi` —— 那些 IP 块是在基线里
+逐个开启的。只在 rk3568.dtsi 之上的结果是**视频编解码/RGA/IEP/JPEG/硬件 RNG/IOMMU
+全部停留在默认关闭状态**，表现为：
+
+- jellyfin-ffmpeg（rkmpp）硬件转码不可用
+- RGA 缩放、IEP 去隔行、JPEG 硬件解码不可用
+- 硬件随机数不可用（影响加解密性能）
+
+修复：在本板 DTS 末尾**照抄官方基线原文**补上 `&vdpu / &vepu / &rkvdec / &rkvenc /
+&rk_rga / &iep / &jpegd / &rng / &dfi` 及对应 `*_mmu` 的 `status = "okay"`。
+刻意与两个权威来源保持一致：
+
+- `&dmc` 保持 disabled（官方基线里本就是 disabled）
+- NPU 保持 disabled（厂商出厂 T68M 设备树里亦为 disabled）
+
+CI 构建后会回读引导分区里的 DTB，用 `fdtget` **断言上述节点 status=okay**，
+不通过则整步失败 —— 避免"以为改了其实没生效"。
 
 ## 使用
 
