@@ -129,7 +129,7 @@ jobs:
           sudo losetup -d "$LOOP"
 
           if [ -f "${IMG}.xz" ]; then
-            echo "re-compressing..."; rm -f "${IMG}.xz"; xz -T0 "${IMG}"; ls -lh "${IMG}.xz"
+            echo "re-compressing..."; rm -f "${IMG}.xz"; sudo xz -T0 "${IMG}"; ls -lh "${IMG}.xz"
           fi
 
       - name: Show outputs
