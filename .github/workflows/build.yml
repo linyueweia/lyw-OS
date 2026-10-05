@@ -94,8 +94,10 @@ jobs:
           #     本工作流在构建前把默认值改为 v1.23（1056MHz），此处回读镜像自证。
           echo "--- (0) 校验镜像内嵌 DDR 固件 ---"
           sudo python3 - "$IMG" <<'PYEOF'
-          import sys, pathlib
-          img = pathlib.Path(sys.argv[1]).read_bytes()[:0x36000]
+          import sys
+          with open(sys.argv[1], 'rb') as fh:      # 只读引导区前 0x36000 字节
+              img = fh.read(0x36000)
+          import pathlib
           hits = []
           for f in sorted(pathlib.Path('build/cache/sources/rkbin-tools/rk35').glob('rk3568_ddr_*.bin')):
               blob = f.read_bytes()
