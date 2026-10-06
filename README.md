@@ -125,17 +125,23 @@ CI 构建后会回读引导分区里的 DTB，用 `fdtget` **断言上述节点 
 内核模块 / Python 依赖）后的结论：缺失项**恰好只有这一整套**，其它（内核模块、网口、
 内核配置等）零差异。
 
-修复同样做在**构建阶段**，走框架原生的 customize 钩子，而不是事后往镜像里塞文件：
+修复同样做在**构建阶段**，走框架原生的扩展钩子而不是事后往镜像里塞文件：
 
 ```
-userpatches/customize-image.sh   本仓库 customize-image.sh，框架自动拷入 chroot 并执行
-userpatches/overlay/             载荷 roceos-payload.tar.gz，在 chroot 内即 /tmp/overlay
+build/userpatches/extensions/t68m-roceos.sh   本仓库 extensions/ 下的扩展
+build/userpatches/overlay/roceos-payload.tar.gz   载荷（框架自动送进 chroot）
 ```
 
-钩子做的事：安装应用本体 → 装 3 个 systemd 服务并显式建立 `multi-user.target.wants`
-启用链接 → 装 nginx 站点与证书（**移除 `default` 站点**：它与 `roceos.conf` 都声明
-`listen 80 default_server`，共存会让 nginx 启动失败）→ Flask 栈优先用 `apt` 安装、
-失败则回退到载荷内文件 → 全部逐项自证，任一失败即整步失败。
+**为什么是扩展 + `post_post_debootstrap_tweaks` 这个早期阶段**：启用服务必须用
+`chroot_sdcard systemctl --no-reload enable`，这正是官方 `istorenext` 扩展启用它自己
+服务的方式。实测（构建 37404316629）在 `customize-image.sh` 阶段用 `ln -sf` 建
+`multi-user.target.wants` 链接，钩子内自检是 ✅、但**最终镜像里链接消失**（被后续流程
+清掉），导致构建自证失败。改用官方同款阶段后链接得以留存。
+
+扩展做的事：安装应用本体 → 装 3 个 systemd 服务 → 装 nginx 站点与证书（**移除 `default`
+站点**：它与 `roceos.conf` 都声明 `listen 80 default_server`，共存会让 nginx 启动失败）
+→ 用框架 helper 启用服务并补一份 systemd preset（防后续 `preset-all` 重置）→
+Flask 栈优先 `apt`、失败回退载荷内文件 → 全部逐项自证，任一失败即整步失败。
 
 载荷来源：从**官方 Easepi-r1 镜像**中提取（就是官方自己用的那一份），发布为
 [release `roceos-payload-v1`](https://github.com/linyueweia/lyw-OS/releases/tag/roceos-payload-v1)，
@@ -159,6 +165,16 @@ CI 构建后会回读 DTB 逐项断言：两个 LED 的 `default-state`、`/mpp-
 `route-hdmi` 的 `status`、`route-hdmi` 的 `connect` 必须等于 HDMI `port@0/endpoint@0`
 所连的 VP，且 `/hdmi-con` 必须不存在。
 
+### SDIO WiFi（AIC8800）——只缺固件，不缺驱动（2026-10）
+
+体检发现 `/lib/modules/.../aic8800_sdio/{aic8800_bsp,aic8800_btlpm}.ko` **本来就在镜像里**，
+内核配置也已开启（`CONFIG_AIC8800_WLAN_SUPPORT=m`），缺的只是 **固件文件**
+（`CONFIG_AIC_FW_PATH="/lib/firmware/aic8800/SDIO/aic8800D80/"`）。
+
+修复：从**厂商 iStoreOS 镜像**提取 `lib/firmware/aic8800/sdio/*`（30 个文件、4.6M），
+随载荷一并装入，并且**两份路径都放**（驱动编译进的是全大写 `aic8800/SDIO/aic8800D80/`，
+厂商用的是小写 `aic8800/sdio/`），避免大小写差异导致加载失败。
+
 ## 使用
 
 1. **Actions → Build iNextOS for LYT T68M → Run workflow**（或 push 到 `main`）
@@ -180,7 +196,8 @@ config/boards/lyt-t68m.csc                     板级配置（BOOT_FDT_FILE / �
 patch/kernel/rk35xx-vendor-6.1/dt/*.dts        板级设备树（框架会自动拷入内核并改 Makefile）
 kernel-files/rk3568-lyt-t68m.dtb              板级 DTB（用于 boot 分区）
 kernel-files/{idbloader.img,u-boot.itb}      仅作参考备份，**不再注入镜像**
-customize-image.sh                            框架钩子：构建阶段补齐 roceos 网页后台（载荷走 userpatches/overlay）
+extensions/t68m-roceos.sh                     框架扩展：构建阶段补齐 roceos 网页后台 + AIC8800 WiFi 固件
+                                              （载荷走 userpatches/overlay，服务用 chroot_sdcard systemctl enable 启用）
 .github/workflows/build.yml                    CI：云编译 + 镜像后处理 + DDR / 设备树 / roceos 三重回读自证
 ```
 

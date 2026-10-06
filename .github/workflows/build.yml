@@ -64,12 +64,17 @@ jobs:
           URL="https://github.com/linyueweia/lyw-OS/releases/download/roceos-payload-v1/roceos-payload.tar.gz"
           curl -fsSL -o build/userpatches/overlay/roceos-payload.tar.gz "$URL"
           # 载荷指纹固定断言：内容一旦变化立即失败，不留"以为改了其实没改"的余地。
-          echo "540c32ff39fc5cbac3d6326a45e776d46208967e042f9eebe901574dcbb2a26f  build/userpatches/overlay/roceos-payload.tar.gz" | sha256sum -c -
-          cp -v t68m/customize-image.sh build/userpatches/customize-image.sh
-          ls -lh build/userpatches build/userpatches/overlay
-          echo "--- 载荷关键文件抽查:"
+          echo "6b819584a1b1701163f8983bd59a31821643f64dd65c76ba8f500ef54c5e8bb5  build/userpatches/overlay/roceos-payload.tar.gz" | sha256sum -c -
+          # 扩展放在 userpatches/extensions/ —— 框架会自动搜索并加载该目录（日志里能见到
+          # "Extension search Directory .../build/userpatches/extensions"）。
+          # 用扩展的 post_post_debootstrap_tweaks 钩子（官方 istorenext 扩展同款阶段）安装，
+          # 而不是 customize-image.sh：实测后者建的 systemd 启用链接会被后续流程清掉。
+          mkdir -p build/userpatches/extensions
+          cp -v t68m/extensions/t68m-roceos.sh build/userpatches/extensions/
+          ls -lh build/userpatches build/userpatches/overlay build/userpatches/extensions
+          echo "--- 载荷关键文件抽查（含 WiFi 固件）:"
           tar tzf build/userpatches/overlay/roceos-payload.tar.gz \
-            | grep -E 'opt/roceos/roceos$|opt/roceos/www/index.html|roceos-ai/server.py|roceos-ai/librkllmrt.so|system/roceos.*\.service|sites-available/roceos.conf|ssl/roceos.key'
+            | grep -E 'opt/roceos/roceos$|opt/roceos/www/index.html|roceos-ai/server.py|roceos-ai/librkllmrt.so|system/roceos.*\.service|sites-available/roceos.conf|ssl/roceos.key|firmware/aic8800/sdio/fmacfw_8800d80_u02.bin'
 
       - name: Set up QEMU (binfmt_misc for arm64 cross-build)
         uses: docker/setup-qemu-action@v3
@@ -265,6 +270,11 @@ jobs:
           else
             echo "    ✅ default 站点已移除"
           fi
+          for f in etc/systemd/system-preset/90-t68m-roceos.preset \
+                   lib/firmware/aic8800/sdio/fmacfw_8800d80_u02.bin \
+                   lib/firmware/aic8800/SDIO/aic8800D80/fmacfw_8800d80_u02.bin; do
+            if [ -e "/mnt/ir/$f" ]; then printf "    ✅ %s\n" "$f"; else printf "    ❌ 缺 %s\n" "$f"; rfail=1; fi
+          done
           echo "--- 主程序架构:"; file /mnt/ir/opt/roceos/roceos | sed 's/^/    /'
           echo "--- Flask 栈（chroot 实测导入，依赖前面注册的 QEMU binfmt）:"
           sudo chroot /mnt/ir /usr/bin/python3 -c "import importlib.metadata as md; print('    ' + ' '.join(f'{p}={md.version(p)}' for p in ('flask','werkzeug','jinja2','itsdangerous','markupsafe','blinker')))" \
