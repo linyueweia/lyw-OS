@@ -232,6 +232,45 @@ phy phy-fe8c0000.phy.7: bifurcation enabled      ← 我们这边没有这一行
 - GitHub 会在仓库 60 天无提交时暂停定时任务，本仓库的指纹提交会自动维持它；
 - 想立刻出一版：Actions → *Build iNextOS for LYT T68M* → Run workflow。
 
+### 系统日志审计与"更新防护"（2026-10）
+
+对整机日志（`journalctl -p err -b`、`dmesg -l err,warn`、apt/dpkg 状态）做了穷尽审计，
+每一项都与**官方 Easepi-r1 镜像**（同内核 6.1.115-vendor-rk35xx）或**板载 eMMC 里厂商
+iStoreOS 的 DTB** 做了 A/B 对照。结论分两类：
+
+**① 可修、已修并已进镜像**
+
+- **roceos 更新流程会删掉固件包**（一次真实事故的根因）：该流程会装发行版固件包
+  （firmware-atheros / firmware-brcm80211 …），而 `armbian-firmware` 的 control 里
+  `Provides` 且 `Conflicts` 了其中一部分 —— apt 为满足冲突会把 armbian-firmware 整个
+  卸载，连带删除它管理的 `/lib/firmware/aic8800`（WiFi 固件，82 个文件）。而该包不在任何
+  apt 源里（随镜像首启安装后即删），apt 搜不到，只能从镜像按 dpkg 清单重建 deb 才装得回。
+  **两道防护（已进镜像）**：
+  ① `/etc/apt/preferences.d/10-inextos-firmware-conflict` 以 `Pin-Priority: -1`
+  禁止安装与 armbian-firmware 互斥的包；
+  ② 对更新流程还会请求的固件包装"同名空壳包"（不含文件，内容本由 armbian-firmware 提供），
+  使依赖检查成立、从而不再触发危险安装。
+- **`serial-getty@ttyFIQ0` 报错**：框架启用了该 getty，而本板无此串口（rk3568 FIQ debugger
+  未接出），启动时会 `Timed out waiting for device dev-ttyFIQ0.device`。已建 mask 链接屏蔽。
+
+**② 经 A/B 确认属上游固有、非本板缺陷（不改）**
+
+| 日志项 | 依据 |
+|---|---|
+| `roceos-ai` failed（模型文件不存在） | 官方 R1 镜像同样无 `model.conf`/`*.rkllm`，模型按需下载 |
+| `mali fde60000.gpu: Failed to map registers`、IRQ 未找到 | gpu 节点与官方 R1 逐项一致（reg/interrupts/opp/supply），残余在内核驱动层 |
+| `rkvdec/rkvenc: Failed to get leakage`、`shared_niu_* not found` | 与官方 R1 逐项一致，仅 phandle 编号不同 |
+| `rockchip-vop2: no regulator (vop) found` | R1 同样没有 `vop-supply`（可选属性，指错会调错稳压器，故不加） |
+| `rk_gmac: Can not read property tx_delay/rx_delay` | 上游 OpenWrt 本板 DTS 用 `phy-mode = "rgmii-id"`，延迟由 PHY 内部完成，DT 本就不该有这两个属性；R1 的值是其 PCB 参数，不可照抄 |
+| `dw-pcie ... invalid resource / Failed to initialize host` | 通用驱动先试探失败、`rk-pcie` 随即接手并成功（两路均 link up） |
+| `rk817-battery/charger/codec: matching dt id`、`arm-scmi protocol 17/22 not active`、`blkmapd`、BPF LSM、alsa-restore GOTO 标签 | 共享 dtsi / 发行版自带噪音，官方镜像同样存在 |
+
+**SDIO WiFi 排查结论**：空总线不是故障，需先确认网卡是否已插入；DT 侧已核对就绪 ——
+`&sdmmc2` 对应 `mmc@fe000000`（不是 fe2c0000，那是 sdmmc1，两边都 disabled、与 WiFi 无关），
+属性为 `status=okay` + `mmc-pwrseq` + `cap-sdio-irq` + `non-removable` + `supports-sdio` +
+`sd-uhs-sdr104`，pwrseq 用 RK809 的 CLK1 作 `ext_clock`、复位脚 `gpio3 PD5` 低有效，
+与厂商 DTB 逐项一致；驱动与 82 个固件文件均在镜像内。
+
 ## 使用
 
 1. **Actions → Build iNextOS for LYT T68M → Run workflow**（或 push 到 `main`）

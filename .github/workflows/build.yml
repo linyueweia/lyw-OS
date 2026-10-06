@@ -280,6 +280,27 @@ jobs:
               echo "    ❌ $n 缺 rockchip,bifurcation（第二路 2.5G 会失败）"; dfail=1
             fi
           done
+
+          # 更新防护：apt 禁止清单 + 空壳固件包 + ttyFIQ0 getty 屏蔽
+          # （roceos 的更新流程会装发行版固件包，与 armbian-firmware 冲突并把它连同
+          #   WiFi 固件一起删掉，实测过；这两项让该流程无法再造成破坏）
+          if grep -q '^Pin-Priority: -1' "$R/etc/apt/preferences.d/10-inextos-firmware-conflict" 2>/dev/null; then
+            echo "    ✅ apt 禁止清单(10-inextos-firmware-conflict) 就位"
+          else
+            echo "    ❌ 缺少 apt 禁止清单，更新流程可能再次删除 armbian-firmware"; dfail=1
+          fi
+          for p in firmware-atheros firmware-iwlwifi firmware-misc-nonfree; do
+            if grep -q "^Package: ${p}$" "$R/var/lib/dpkg/status" 2>/dev/null; then
+              echo "    ✅ 空壳固件包 ${p}"
+            else
+              echo "    ❌ 缺少空壳固件包 ${p}（依赖检查会失败并触发危险安装）"; dfail=1
+            fi
+          done
+          if [ -L "$R/etc/systemd/system/serial-getty@ttyFIQ0.service" ]; then
+            echo "    ✅ ttyFIQ0 getty 已屏蔽"
+          else
+            echo "    ❌ ttyFIQ0 getty 未屏蔽（启动会等设备超时）"; dfail=1
+          fi
           [ "$dfail" = 0 ] || { echo "!! LED / HDMI 路由 / mpp_srv 自证失败"; exit 1; }
           echo "    ✅ LED / HDMI 路由 / mpp_srv 自证通过"
 

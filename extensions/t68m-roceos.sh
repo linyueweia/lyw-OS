@@ -90,6 +90,60 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 	enable roceos-vision.service
 	EOF
 
+	# ── 防"更新流程删固件"：apt 禁止清单 + 同名空壳包 ──────────────
+	# 实机定位（2026-10）：roceos 的"系统更新/安装依赖"会去装发行版固件包，而
+	# armbian-firmware 的 control 里 Provides 且 Conflicts 了其中一部分 —— apt 为
+	# 满足冲突会把 armbian-firmware 整个卸载，连带删掉它管理的 /lib/firmware/aic8800
+	#（WiFi 固件）等文件；且该包不在任何 apt 源里（随镜像首启安装后即删），装不回来。
+	# 两道防护：
+	#   ① apt pin -1：禁止安装与 armbian-firmware 互斥的那几个包（内容已由它提供）；
+	#   ② 其余更新流程会请求的固件包，装"同名空壳包"（不含文件，仅让依赖检查成立）。
+	mkdir -p "${SDCARD}/etc/apt/preferences.d" "${SDCARD}/tmp"
+	cat >"${SDCARD}/etc/apt/preferences.d/10-inextos-firmware-conflict" <<-'EOF'
+	# 与 armbian-firmware 互斥（armbian-firmware 已 Provides 其全部内容）。
+	# 若被安装，apt 会为满足冲突而卸载 armbian-firmware，连带删除 WiFi/网卡固件。
+	Package: linux-firmware firmware-brcm80211 firmware-ralink firmware-samsung firmware-realtek armbian-firmware-full
+	Pin: version *
+	Pin-Priority: -1
+	EOF
+
+	local name ver sdir
+	for name in firmware-atheros firmware-ath9k-htc firmware-carl9170 firmware-iwlwifi \
+		firmware-libertas firmware-mediatek firmware-misc-nonfree firmware-sof-signed \
+		firmware-ti-connectivity; do
+		case "$name" in
+			firmware-ath9k-htc) ver="1.4.0-110-ge888634+dfsg1-0.1" ;;
+			firmware-carl9170)  ver="1.9.9-450-gad1c721+dfsg-0.1" ;;
+			firmware-sof-signed) ver="2025.01-1" ;;
+			*)                   ver="20250410-2" ;;
+		esac
+		sdir="$(mktemp -d)/${name}"
+		mkdir -p "${sdir}/DEBIAN"
+		cat >"${sdir}/DEBIAN/control" <<-EOF
+		Package: ${name}
+		Version: ${ver}+inextos1
+		Architecture: all
+		Section: kernel
+		Priority: optional
+		Maintainer: iNextOS LYT T68M <root@localhost>
+		Description: Compatibility stub for ${name}
+		 Firmware content is provided by armbian-firmware. This stub only
+		 satisfies dependency checks from the vendor update flow so that
+		 installing it cannot remove armbian-firmware or its firmware files.
+		EOF
+		dpkg-deb -b "${sdir}" "${SDCARD}/tmp/stub-${name}.deb" >/dev/null
+		chroot_sdcard dpkg -i "/tmp/stub-${name}.deb" >/dev/null 2>&1 || \
+			display_alert "firmware stub ${name} install failed (non-fatal)" "$EXTENSION" "warn"
+		rm -rf "$(dirname "$sdir")"
+	done
+	rm -f "${SDCARD}"/tmp/stub-*.deb
+
+	# ── 消掉 ttyFIQ0 报错 ──────────────────────────────────────
+	# 框架启用了 serial-getty@ttyFIQ0，而本板无该串口（rk3568 FIQ debugger 未接），
+	# 启动时会 "Timed out waiting for device dev-ttyFIQ0.device" 且 getty 反复重启。
+	# 直接建 mask 链接（等价 systemctl mask，不依赖 chroot 里跑 systemd）。
+	ln -sf /dev/null "${SDCARD}/etc/systemd/system/serial-getty@ttyFIQ0.service"
+
 	# ── 阶段内自证 ────────────────────────────────────────────
 	local fail=0
 	for f in opt/roceos/roceos opt/roceos/www/index.html opt/roceos-ai/server.py \
@@ -102,6 +156,12 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 		[[ -e "${SDCARD}/${f}" ]] || { display_alert "missing ${f}" "$EXTENSION" "err"; fail=1; }
 	done
 	[[ -L "${SDCARD}/etc/nginx/sites-enabled/roceos.conf" ]] || { display_alert "nginx site not enabled" "$EXTENSION" "err"; fail=1; }
+	# ── 更新防护与 ttyFIQ0 自证 ──
+	[[ -f "${SDCARD}/etc/apt/preferences.d/10-inextos-firmware-conflict" ]] || { display_alert "apt pin file missing" "$EXTENSION" "err"; fail=1; }
+	grep -q '^Pin-Priority: -1' "${SDCARD}/etc/apt/preferences.d/10-inextos-firmware-conflict" || { display_alert "apt pin priority wrong" "$EXTENSION" "err"; fail=1; }
+	grep -q '^Package: firmware-atheros$' "${SDCARD}/var/lib/dpkg/status" || { display_alert "firmware stub firmware-atheros not installed" "$EXTENSION" "err"; fail=1; }
+	grep -q '^Package: firmware-iwlwifi$' "${SDCARD}/var/lib/dpkg/status" || { display_alert "firmware stub firmware-iwlwifi not installed" "$EXTENSION" "err"; fail=1; }
+	[[ -L "${SDCARD}/etc/systemd/system/serial-getty@ttyFIQ0.service" ]] || { display_alert "ttyFIQ0 getty not masked" "$EXTENSION" "err"; fail=1; }
 	[[ -e "${SDCARD}/etc/nginx/sites-enabled/default" ]] && { display_alert "default site still present" "$EXTENSION" "err"; fail=1; }
 	[[ $fail == 0 ]] || exit_with_error "t68m roceos customization self-check failed"
 
