@@ -55,7 +55,7 @@ jobs:
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git add last-upstream-sha
           git commit -m "chore: 记录上游框架指纹 ${{ steps.cmp.outputs.sha }} [skip ci]"
-          git push
+          git push origin HEAD:${{ github.ref_name }}
 
   build:
     name: Build iNextOS image (LYT T68M / RK3568)
