@@ -72,10 +72,13 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 	# ── Flask 栈（roceos-ai 用）：apt 优先，失败回退载荷内文件 ────
 	chroot_sdcard apt-get install -y -qq python3-flask python3-werkzeug python3-jinja2 \
 		python3-itsdangerous python3-markupsafe python3-blinker || true
-	if ! chroot_sdcard python3 -c 'import flask, werkzeug, jinja2, itsdangerous, markupsafe, blinker' 2>/dev/null; then
-		display_alert "Flask stack import failed, using payload fallback" "$EXTENSION" "warn"
-		# 只拷 Flask 栈所需的 6 个包（含各自的 dist-info），不要把 payload 里
-		# 整个 dist-packages 搬过去——那会把镜像撑大约 230MB，撑爆框架的 rootfs 估算。
+	# 注意：框架的 chroot_sdcard 以 "$*" 拼串后交给 bash -c，引号会被吃掉，
+	# 因此必须把「整条命令」作为一个参数传入（否则 python 只收到 -c import → SyntaxError）。
+	local flask_test="python3 -c 'import flask, werkzeug, jinja2, itsdangerous, markupsafe, blinker'"
+	local flask_out
+	if ! flask_out=$(chroot_sdcard "$flask_test" 2>&1); then
+		display_alert "Flask stack not importable (apt had no DNS): ${flask_out##*$'\n'}" "$EXTENSION" "warn"
+		# 回退：从载荷拷入 Flask 栈所需的包（含各自 dist-info）
 		mkdir -p "${SDCARD}/usr/lib/python3/dist-packages"
 		local pkg
 		for pkg in flask flask_cors werkzeug jinja2 itsdangerous markupsafe blinker \
@@ -86,8 +89,9 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 			done
 		done
 		# 兜底拷贝后必须复验，否则"以为装好了其实没有"
-		chroot_sdcard python3 -c 'import flask, werkzeug, jinja2, itsdangerous, markupsafe, blinker' 2>/dev/null || \
-			exit_with_error "Flask stack still not importable after payload fallback"
+		flask_out=$(chroot_sdcard "$flask_test" 2>&1) || \
+			exit_with_error "Flask stack still not importable after payload fallback: ${flask_out##*$'\n'}"
+		display_alert "Flask stack OK after payload fallback" "$EXTENSION" "info"
 	fi
 
 	rm -rf "$stage"
