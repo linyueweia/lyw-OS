@@ -72,10 +72,22 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 	# ── Flask 栈（roceos-ai 用）：apt 优先，失败回退载荷内文件 ────
 	chroot_sdcard apt-get install -y -qq python3-flask python3-werkzeug python3-jinja2 \
 		python3-itsdangerous python3-markupsafe python3-blinker || true
-	if ! chroot_sdcard python3 -c "import flask, werkzeug, jinja2, itsdangerous, markupsafe, blinker" 2>/dev/null; then
+	if ! chroot_sdcard python3 -c 'import flask, werkzeug, jinja2, itsdangerous, markupsafe, blinker' 2>/dev/null; then
 		display_alert "Flask stack import failed, using payload fallback" "$EXTENSION" "warn"
+		# 只拷 Flask 栈所需的 6 个包（含各自的 dist-info），不要把 payload 里
+		# 整个 dist-packages 搬过去——那会把镜像撑大约 230MB，撑爆框架的 rootfs 估算。
 		mkdir -p "${SDCARD}/usr/lib/python3/dist-packages"
-		cp -a "${stage}/usr/lib/python3/dist-packages/." "${SDCARD}/usr/lib/python3/dist-packages/"
+		local pkg
+		for pkg in flask flask_cors werkzeug jinja2 itsdangerous markupsafe blinker \
+			flask-*.dist-info werkzeug-*.dist-info jinja2-*.dist-info \
+			itsdangerous-*.dist-info markupsafe-*.dist-info blinker-*.dist-info; do
+			for src in "${stage}"/usr/lib/python3/dist-packages/${pkg}; do
+				[[ -e "$src" ]] && cp -a "$src" "${SDCARD}/usr/lib/python3/dist-packages/"
+			done
+		done
+		# 兜底拷贝后必须复验，否则"以为装好了其实没有"
+		chroot_sdcard python3 -c 'import flask, werkzeug, jinja2, itsdangerous, markupsafe, blinker' 2>/dev/null || \
+			exit_with_error "Flask stack still not importable after payload fallback"
 	fi
 
 	rm -rf "$stage"
@@ -177,5 +189,32 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 	[[ $fail == 0 ]] || exit_with_error "t68m roceos customization self-check failed"
 
 	display_alert "roceos web UI + WiFi firmware installed and enabled (T68M)" "$EXTENSION" "info"
+	return 0
+}
+
+# ══════════════════════════════════════════════════════════════════════════
+# 晚钩子：框架在 post_post_debootstrap_tweaks 之后还会做"启用串口控制台"等收尾动作，
+# 会把 /etc/systemd/system/getty.target.wants/serial-getty@ttyFIQ0.service 建回来，
+# 使本板（无 ttyFIQ0 串口）在启动时 "Timed out waiting for device dev-ttyFIQ0.device"。
+# 因此在 rootfs 仍挂载、框架收尾之后的 pre_umount_final_image 再施加一次屏蔽。
+# ══════════════════════════════════════════════════════════════════════════
+function pre_umount_final_image__t68m_roceos() {
+	display_alert "Final-pass: masking ttyFIQ0 getty (T68M)" "$EXTENSION" "info"
+
+	# 移除框架建立的启用链接（两端都清，避免 preset/target 任一残留）
+	rm -f "${SDCARD}/etc/systemd/system/getty.target.wants/serial-getty@ttyFIQ0.service"
+	rm -f "${SDCARD}/etc/systemd/system/multi-user.target.wants/serial-getty@ttyFIQ0.service"
+
+	# 建立 mask（指向 /dev/null）
+	mkdir -p "${SDCARD}/etc/systemd/system"
+	ln -sf /dev/null "${SDCARD}/etc/systemd/system/serial-getty@ttyFIQ0.service"
+
+	# 最终态断言：mask 必须是符号链接且指向 /dev/null，且框架的启用链接不存在
+	[[ -L "${SDCARD}/etc/systemd/system/serial-getty@ttyFIQ0.service" ]] || \
+		exit_with_error "ttyFIQ0 mask missing after final pass"
+	[[ "$(readlink "${SDCARD}/etc/systemd/system/serial-getty@ttyFIQ0.service")" == "/dev/null" ]] || \
+		exit_with_error "ttyFIQ0 mask does not point to /dev/null"
+	[[ ! -e "${SDCARD}/etc/systemd/system/getty.target.wants/serial-getty@ttyFIQ0.service" ]] || \
+		exit_with_error "ttyFIQ0 getty target link still present"
 	return 0
 }
