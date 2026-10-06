@@ -313,6 +313,26 @@ ModemManager: /org/freedesktop/ModemManager1/Modem/0 [Quectel] EM05-CN
 即：本板 4G 模块走的是 DWC3（USB3）通道，父节点未使能时整条通道不存在，这正是
 「iStoreOS 能认、iNextOS 认不到」的原因。
 
+### 扩展为何一直没生效 —— ENABLE_EXTENSIONS 白名单（2026-10 定位）
+
+构建失败自证（`❌ 缺少 apt 禁止清单 / 空壳固件包 / ttyFIQ0 未屏蔽`）的根因不在扩展代码，
+而在 workflow 的构建参数：
+
+```yaml
+ENABLE_EXTENSIONS="istorenext"        # 只有白名单里的扩展会被 enable
+```
+
+框架 `lib/functions/general/extensions.sh:142` 的逻辑是：把 `ENABLE_EXTENSIONS`（或 `EXT`）
+按逗号切分后逐个 `enable_extension`。因此 `userpatches/extensions/t68m-roceos.sh` **从未被加载**，
+其安装与自证代码从未执行；此前"roceos 装上了"实为 `userpatches/overlay` 里的载荷被框架
+自动拷进根分区所致（扩展自身自证也从未跑过，故报错总来自 workflow 的检查）。
+
+修复：`ENABLE_EXTENSIONS="istorenext,t68m-roceos"`。
+
+排查中另有一处误判需记录：曾把该文件不是可执行位（0644）当作根因 —— **不对**，
+加载器只用 `find -name "*.sh"` 加 `grep -l "function <hook>__"` 筛选，不检查可执行位。
+权限改为 0755 无害且是好习惯，但真正原因是上面的白名单。
+
 ## 使用
 
 1. **Actions → Build iNextOS for LYT T68M → Run workflow**（或 push 到 `main`）

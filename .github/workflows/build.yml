@@ -152,7 +152,10 @@ jobs:
             BOARD=lyt-t68m \
             BRANCH=vendor \
             RELEASE=trixie \
-            ENABLE_EXTENSIONS="istorenext" \
+            # 关键：ENABLE_EXTENSIONS 是扩展白名单，只有列表里的扩展会被加载
+          # （框架 extensions.sh 用 `enable_extension` 逐个启用；此前只写了
+          #  istorenext，导致 t68m-roceos 扩展从未加载、防护代码从未执行）
+          ENABLE_EXTENSIONS="istorenext,t68m-roceos" \
             BUILD_MINIMAL=no \
             BUILD_DESKTOP=no \
             KERNEL_CONFIGURE=no \
