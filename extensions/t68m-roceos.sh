@@ -44,8 +44,13 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 	chown -R root:root "${SDCARD}/opt/roceos" "${SDCARD}/opt/roceos-ai" "${SDCARD}/storage"
 
 	# ── systemd 服务 ───────────────────────────────────────────
+	# 官方 unit 没有 [Install] 段（所以 systemctl enable 无从建立 wants 链接）；
+	# 这里补上（幂等），配合下面的直接建链接双保险。
 	for s in roceos.service roceos-ai.service roceos-vision.service; do
 		cp -a "${stage}/etc/systemd/system/${s}" "${SDCARD}/etc/systemd/system/"
+		if ! grep -q '^\[Install\]' "${SDCARD}/etc/systemd/system/${s}"; then
+			printf '\n[Install]\nWantedBy=multi-user.target\n' >> "${SDCARD}/etc/systemd/system/${s}"
+		fi
 	done
 
 	# ── nginx 站点与证书（default 站点必须移除：它与 roceos.conf 抢 default_server）──
