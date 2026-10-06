@@ -296,9 +296,13 @@ jobs:
           else
             echo "    ❌ 缺少 apt 禁止清单，更新流程可能再次删除 armbian-firmware"; dfail=1
           fi
-          for p in firmware-atheros firmware-iwlwifi firmware-misc-nonfree; do
-            if grep -q "^Package: ${p}$" "$R/var/lib/dpkg/status" 2>/dev/null; then
-              echo "    ✅ 空壳固件包 ${p}"
+          # 与 TF 卡（已验收完美）逐项一致：9 个同名空壳固件包，版本一律带 +inextos1
+          for p in firmware-ath9k-htc firmware-atheros firmware-carl9170 firmware-iwlwifi \
+                   firmware-libertas firmware-mediatek firmware-misc-nonfree firmware-sof-signed \
+                   firmware-ti-connectivity; do
+            if awk -v pkg="$p" '/^Package: /{cur=$2} /^Version: /{if(cur==pkg && $2 ~ /\+inextos1$/){found=1}} END{exit !found}' \
+                 "$R/var/lib/dpkg/status" 2>/dev/null; then
+              echo "    ✅ 空壳固件包 ${p} (+inextos1)"
             else
               echo "    ❌ 缺少空壳固件包 ${p}（依赖检查会失败并触发危险安装）"; dfail=1
             fi
@@ -378,8 +382,7 @@ jobs:
           else
             echo "    ✅ default 站点已移除"
           fi
-          for f in etc/systemd/system-preset/90-t68m-roceos.preset \
-                   lib/firmware/aic8800/sdio/fmacfw_8800d80_u02.bin \
+          for f in lib/firmware/aic8800/sdio/fmacfw_8800d80_u02.bin \
                    lib/firmware/aic8800/SDIO/aic8800D80/fmacfw_8800d80_u02.bin; do
             if [ -e "/mnt/ir/$f" ]; then printf "    ✅ %s\n" "$f"; else printf "    ❌ 缺 %s\n" "$f"; rfail=1; fi
           done

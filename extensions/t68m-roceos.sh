@@ -100,16 +100,6 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 		ln -sf "/etc/systemd/system/${s}" "${SDCARD}/etc/systemd/system/multi-user.target.wants/${s}"
 	done
 
-	# ── 再补一份 systemd preset ────────────────────────────────
-	# 万一后续流程跑了 systemctl preset-all（会按 preset 重置启用状态），
-	# 有这份 preset 才能保证这三个服务保持 enabled。
-	mkdir -p "${SDCARD}/etc/systemd/system-preset"
-	cat >"${SDCARD}/etc/systemd/system-preset/90-t68m-roceos.preset" <<-'EOF'
-	enable roceos.service
-	enable roceos-ai.service
-	enable roceos-vision.service
-	EOF
-
 	# ── 防"更新流程删固件"：apt 禁止清单 + 同名空壳包 ──────────────
 	# 实机定位（2026-10）：roceos 的"系统更新/安装依赖"会去装发行版固件包，而
 	# armbian-firmware 的 control 里 Provides 且 Conflicts 了其中一部分 —— apt 为
@@ -166,10 +156,11 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 
 	# ── 阶段内自证 ────────────────────────────────────────────
 	local fail=0
-	for f in opt/roceos/roceos opt/roceos/www/index.html opt/roceos-ai/server.py \
+	# 清单与 TF 卡逐项一致（卡上存在什么，这里就断言什么）
+	for f in opt/roceos/roceos opt/roceos/www/index.html \
+		opt/roceos-ai/server.py opt/roceos-ai/librkllmrt.so \
 		etc/systemd/system/roceos.service \
-		etc/nginx/sites-available/roceos.conf etc/nginx/ssl/roceos.key \
-		etc/systemd/system-preset/90-t68m-roceos.preset; do
+		etc/nginx/sites-available/roceos.conf etc/nginx/ssl/roceos.crt etc/nginx/ssl/roceos.key; do
 		[[ -e "${SDCARD}/${f}" ]] || { display_alert "missing ${f}" "$EXTENSION" "err"; fail=1; }
 	done
 	# 三个启用链接必须用 -L 判定：它们是符号链接，链接目标 /etc/systemd/system/*.service
@@ -194,27 +185,23 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 
 # ══════════════════════════════════════════════════════════════════════════
 # 晚钩子：框架在 post_post_debootstrap_tweaks 之后还会做"启用串口控制台"等收尾动作，
-# 会把 /etc/systemd/system/getty.target.wants/serial-getty@ttyFIQ0.service 建回来，
+# 会把 serial-getty@ttyFIQ0 重新启用；且卡的最终态就是「mask + 框架的 getty.target.wants 链接」，
 # 使本板（无 ttyFIQ0 串口）在启动时 "Timed out waiting for device dev-ttyFIQ0.device"。
 # 因此在 rootfs 仍挂载、框架收尾之后的 pre_umount_final_image 再施加一次屏蔽。
 # ══════════════════════════════════════════════════════════════════════════
 function pre_umount_final_image__t68m_roceos() {
 	display_alert "Final-pass: masking ttyFIQ0 getty (T68M)" "$EXTENSION" "info"
 
-	# 移除框架建立的启用链接（两端都清，避免 preset/target 任一残留）
-	rm -f "${SDCARD}/etc/systemd/system/getty.target.wants/serial-getty@ttyFIQ0.service"
-	rm -f "${SDCARD}/etc/systemd/system/multi-user.target.wants/serial-getty@ttyFIQ0.service"
-
-	# 建立 mask（指向 /dev/null）
+	# 与 TF 卡（已验收完美）完全一致：只建立 mask，指向 /dev/null。
+	# 框架建的 getty.target.wants/serial-getty@ttyFIQ0.service 在卡上【是存在的】，
+	# 不动它 —— mask 的存在即足以让该 getty 无法启动（systemd 对 masked 单元拒绝启动）。
 	mkdir -p "${SDCARD}/etc/systemd/system"
 	ln -sf /dev/null "${SDCARD}/etc/systemd/system/serial-getty@ttyFIQ0.service"
 
-	# 最终态断言：mask 必须是符号链接且指向 /dev/null，且框架的启用链接不存在
+	# 最终态断言：mask 必须是符号链接且指向 /dev/null
 	[[ -L "${SDCARD}/etc/systemd/system/serial-getty@ttyFIQ0.service" ]] || \
 		exit_with_error "ttyFIQ0 mask missing after final pass"
 	[[ "$(readlink "${SDCARD}/etc/systemd/system/serial-getty@ttyFIQ0.service")" == "/dev/null" ]] || \
 		exit_with_error "ttyFIQ0 mask does not point to /dev/null"
-	[[ ! -e "${SDCARD}/etc/systemd/system/getty.target.wants/serial-getty@ttyFIQ0.service" ]] || \
-		exit_with_error "ttyFIQ0 getty target link still present"
 	return 0
 }
