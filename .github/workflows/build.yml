@@ -125,6 +125,10 @@ jobs:
           # 而不是 customize-image.sh：实测后者建的 systemd 启用链接会被后续流程清掉。
           mkdir -p build/userpatches/extensions
           cp -v t68m/extensions/t68m-roceos.sh build/userpatches/extensions/
+          # 关键：框架只加载【可执行】的扩展脚本，权限不对会被静默跳过
+          # （日志表现：Extension search result [ Found 0 extensions ]）
+          chmod +x build/userpatches/extensions/*.sh
+          ls -l build/userpatches/extensions/
           ls -lh build/userpatches build/userpatches/overlay build/userpatches/extensions
           echo "--- 载荷关键文件抽查（含 WiFi 固件）:"
           tar tzf build/userpatches/overlay/roceos-payload.tar.gz \
