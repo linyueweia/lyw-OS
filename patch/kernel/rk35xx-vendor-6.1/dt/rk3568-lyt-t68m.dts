@@ -897,3 +897,23 @@
 &vepu_mmu {
 	status = "okay";
 };
+
+/* ══════════════════════════════════════════════════════════════════
+ * USB3 / DWC3 的两个 glue 父节点必须显式使能（2026-10 实机定位）
+ *
+ * 陷阱：&usbdrd_dwc3 / &usbhost_dwc3 只使能了**子节点**；父节点
+ * usbdrd30/usbhost30 在内核 dtsi 里默认 disabled，父节点关着时整棵子树
+ * 都不会实例化 —— 表现是 /sys/bus/platform/devices 里根本没有
+ * fd000000.usb / fcc00000.usb，两个 DWC3（xHCI）控制器完全不存在，
+ * 于是走该 USB 通道的 4G 模块永远枚举不到（ModemManager 报
+ * No modems were found），而 lyw/iStoreOS 那套同板固件能认到同一模块。
+ * 官方 Easepi-r1（同一颗 6.1.115-vendor-rk35xx 内核）的 usbdrd30/usbhost30
+ * 都是 okay，此处照办。
+ * ══════════════════════════════════════════════════════════════════ */
+&usbdrd30 {
+	status = "okay";
+};
+
+&usbhost30 {
+	status = "okay";
+};

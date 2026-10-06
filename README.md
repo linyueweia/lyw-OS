@@ -271,6 +271,34 @@ iStoreOS 的 DTB** 做了 A/B 对照。结论分两类：
 `sd-uhs-sdr104`，pwrseq 用 RK809 的 CLK1 作 `ext_clock`、复位脚 `gpio3 PD5` 低有效，
 与厂商 DTB 逐项一致；驱动与 82 个固件文件均在镜像内。
 
+### 4G 模块识别不到 —— USB3/DWC3 父节点未使能（2026-10 实机定位）
+
+现象：插入 mini-PCIe 4G 模块后 `lsusb` 无设备、ModemManager 报 `No modems were found`、
+roceos 蜂窝页面拿不到模块；但**同一块板**用 lyw 仓库（iStoreOS/OpenWrt）固件能识别该模块。
+
+定位：内核日志里只有 4 个 USB2.0 平台控制器（fd800000/fd840000/fd880000/fd8c0000），
+**两个 DWC3（USB3）控制器完全不存在**。查 `aliases` 可知 DWC3 的结构是
+
+```
+usbdrd_dwc3 = "/usbdrd/usb@fcc00000";
+usbhost_dwc3 = "/usbhost/usb@fd000000";
+```
+
+即 `usb@fcc00000` / `usb@fd000000` 是 **`usbdrd30` / `usbhost30` 两个 glue 父节点的子节点**。
+本板 DTS 只使能了子节点，而父节点在内核 dtsi 里默认 `disabled` —— **父节点关闭时整棵子树都不会
+实例化**，于是 `fd000000.usb` / `fcc00000.usb` 根本不存在（`/sys/bus/platform/devices` 可证），
+走该 USB 通道的 4G 模块自然永远枚举不到。
+
+修复：与官方 Easepi-r1（同一颗 6.1.115-vendor-rk35xx 内核，其 `usbdrd`/`usbhost` 均为 okay）一致，
+在板级 DTS 里补：
+
+```dts
+&usbdrd30 { status = "okay"; };
+&usbhost30 { status = "okay"; };
+```
+
+CI 自证：构建后回读 DTB，断言 `/usbdrd`、`/usbhost` 均为 `okay`。
+
 ## 使用
 
 1. **Actions → Build iNextOS for LYT T68M → Run workflow**（或 push 到 `main`）

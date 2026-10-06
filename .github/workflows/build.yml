@@ -301,6 +301,17 @@ jobs:
           else
             echo "    ❌ ttyFIQ0 getty 未屏蔽（启动会等设备超时）"; dfail=1
           fi
+
+          # USB3/DWC3 的两个 glue 父节点必须是 okay：只 enable 子节点时整棵子树
+          # 不实例化 → fd000000.usb/fcc00000.usb 不存在 → 走该通道的 4G 模块枚举不到。
+          for n in /usbdrd /usbhost; do
+            st=$(sudo fdtget -t s "$DT" "$n" status 2>/dev/null || echo missing)
+            if [ "$st" = "okay" ]; then
+              echo "    ✅ $n status=okay"
+            else
+              echo "    ❌ $n status=$st（应为 okay，否则 USB3 控制器与 4G 通道不工作）"; dfail=1
+            fi
+          done
           [ "$dfail" = 0 ] || { echo "!! LED / HDMI 路由 / mpp_srv 自证失败"; exit 1; }
           echo "    ✅ LED / HDMI 路由 / mpp_srv 自证通过"
 
