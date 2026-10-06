@@ -291,7 +291,13 @@ jobs:
           # 更新防护：apt 禁止清单 + 空壳固件包 + ttyFIQ0 getty 屏蔽
           # （roceos 的更新流程会装发行版固件包，与 armbian-firmware 冲突并把它连同
           #   WiFi 固件一起删掉，实测过；这两项让该流程无法再造成破坏）
-          if grep -q '^Pin-Priority: -1' "$R/etc/apt/preferences.d/10-inextos-firmware-conflict" 2>/dev/null; then
+          #
+          # 注意：这三项全在【根分区】(p2)，不能像 DTB 那样用 boot 分区挂载点查。
+          #      早先误用未赋值的 $R，"$PROT/etc/..." 退化成宿主机 /etc/... ，于是永远报缺失。
+          PROT=/mnt/pr
+          sudo mkdir -p "$PROT"
+          sudo mount "${LOOP}p2" "$PROT"
+          if grep -q '^Pin-Priority: -1' "$PROT/etc/apt/preferences.d/10-inextos-firmware-conflict" 2>/dev/null; then
             echo "    ✅ apt 禁止清单(10-inextos-firmware-conflict) 就位"
           else
             echo "    ❌ 缺少 apt 禁止清单，更新流程可能再次删除 armbian-firmware"; dfail=1
@@ -301,17 +307,18 @@ jobs:
                    firmware-libertas firmware-mediatek firmware-misc-nonfree firmware-sof-signed \
                    firmware-ti-connectivity; do
             if awk -v pkg="$p" '/^Package: /{cur=$2} /^Version: /{if(cur==pkg && $2 ~ /\+inextos1$/){found=1}} END{exit !found}' \
-                 "$R/var/lib/dpkg/status" 2>/dev/null; then
+                 "$PROT/var/lib/dpkg/status" 2>/dev/null; then
               echo "    ✅ 空壳固件包 ${p} (+inextos1)"
             else
               echo "    ❌ 缺少空壳固件包 ${p}（依赖检查会失败并触发危险安装）"; dfail=1
             fi
           done
-          if [ -L "$R/etc/systemd/system/serial-getty@ttyFIQ0.service" ]; then
+          if [ -L "$PROT/etc/systemd/system/serial-getty@ttyFIQ0.service" ]; then
             echo "    ✅ ttyFIQ0 getty 已屏蔽"
           else
             echo "    ❌ ttyFIQ0 getty 未屏蔽（启动会等设备超时）"; dfail=1
           fi
+          sudo umount "$PROT"
 
           # USB3/DWC3 的两个 glue 父节点必须是 okay：只 enable 子节点时整棵子树
           # 不实例化 → fd000000.usb/fcc00000.usb 不存在 → 走该通道的 4G 模块枚举不到。

@@ -78,16 +78,11 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 	local flask_out
 	if ! flask_out=$(chroot_sdcard "$flask_test" 2>&1); then
 		display_alert "Flask stack not importable (apt had no DNS): ${flask_out##*$'\n'}" "$EXTENSION" "warn"
-		# 回退：从载荷拷入 Flask 栈所需的包（含各自 dist-info）
+		# 回退：整体拷入载荷的 dist-packages（实测仅 4.3MB，含 flask/werkzeug/jinja2/
+		# itsdangerous/markupsafe/blinker 及其元数据）。不做挑选，避免漏掉 metadata
+		# 导致 importlib.metadata.version() 查不到包（曾被 CI 校验抓到）。
 		mkdir -p "${SDCARD}/usr/lib/python3/dist-packages"
-		local pkg
-		for pkg in flask flask_cors werkzeug jinja2 itsdangerous markupsafe blinker \
-			flask-*.dist-info werkzeug-*.dist-info jinja2-*.dist-info \
-			itsdangerous-*.dist-info markupsafe-*.dist-info blinker-*.dist-info; do
-			for src in "${stage}"/usr/lib/python3/dist-packages/${pkg}; do
-				[[ -e "$src" ]] && cp -a "$src" "${SDCARD}/usr/lib/python3/dist-packages/"
-			done
-		done
+		cp -a "${stage}/usr/lib/python3/dist-packages/." "${SDCARD}/usr/lib/python3/dist-packages/"
 		# 兜底拷贝后必须复验，否则"以为装好了其实没有"
 		flask_out=$(chroot_sdcard "$flask_test" 2>&1) || \
 			exit_with_error "Flask stack still not importable after payload fallback: ${flask_out##*$'\n'}"
