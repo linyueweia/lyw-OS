@@ -186,6 +186,35 @@ jobs:
           [ "$dtfail" = 0 ] || { echo "!! 设备树 IP 块未全部使能（DTS 未生效？）"; exit 1; }
           echo "    ✅ SoC IP 块使能校验通过"
 
+          # (2c) 显示 / LED / 硬解：设备树自证。
+          #      这三项都是实机 dmesg 定位的：HDMI 因自造 hdmi-con + route-hdmi 默认
+          #      指向 vp1 而 probe 失败（-22）；LED 缺 default-state 被驱动置灭；
+          #      mpp-srv 未使能导致 /dev/mpp_service 不存在、硬转码全线不可用。
+          echo "--- (2c) 校验 LED / HDMI 路由 / mpp_srv ---"
+          dfail=0
+          for spec in "/gpio-leds/led-power default-state on" \
+                      "/gpio-leds/led-status default-state on" \
+                      "/mpp-srv status okay" \
+                      "/display-subsystem/route/route-hdmi status okay"; do
+            set -- $spec
+            got=$(sudo fdtget -t s "$DT" "$1" "$2" 2>/dev/null || echo MISSING)
+            printf "    %-48s %s\n" "$1 $2" "$got"
+            [ "$got" = "$3" ] || dfail=1
+          done
+          # HDMI 路由必须指向 hdmi 的 port@0/endpoint@0 所连的 VP（即 vp0_out_hdmi）
+          want=$(sudo fdtget -t x "$DT" /hdmi@fe0a0000/ports/port@0/endpoint@0 remote-endpoint 2>/dev/null)
+          got=$(sudo fdtget -t x "$DT" /display-subsystem/route/route-hdmi connect 2>/dev/null)
+          printf "    %-48s want=%s got=%s\n" "route-hdmi connect == hdmi_in_vp0" "$want" "$got"
+          [ -n "$want" ] && [ "$want" = "$got" ] || dfail=1
+          # hdmi-con 必须不存在（它与 BSP 的 dw-hdmi 抢 connector，会让 HDMI 绑定 -22）
+          if sudo fdtget -t s "$DT" /hdmi-con compatible >/dev/null 2>&1; then
+            echo "    ❌ /hdmi-con 仍然存在（会撞坏 dw-hdmi 的 bridge 链）"; dfail=1
+          else
+            echo "    ✅ /hdmi-con 已移除"
+          fi
+          [ "$dfail" = 0 ] || { echo "!! LED / HDMI 路由 / mpp_srv 自证失败"; exit 1; }
+          echo "    ✅ LED / HDMI 路由 / mpp_srv 自证通过"
+
           # (3) armbianEnv.txt: keep armbian's own file (it has overlays,
           #     usbstoragequirks, etc). Only append what is missing; never overwrite.
           if [ -f /mnt/ib/armbianEnv.txt ]; then

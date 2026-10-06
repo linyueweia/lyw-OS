@@ -54,6 +54,9 @@
 			color = <LED_COLOR_ID_GREEN>;
 			function = LED_FUNCTION_POWER;
 			gpios = <&gpio4 RK_PC6 GPIO_ACTIVE_HIGH>;
+			/* 无此属性时 leds-gpio 驱动在探测期会把灯置灭（内核默认 off）。
+			   厂商系统靠用户态脚本点亮，我们的系统没有该脚本，故在设备树里定死常亮。 */
+			default-state = "on";
 		};
 
 		status_led: led-status {
@@ -61,17 +64,7 @@
 			color = <LED_COLOR_ID_RED>;
 			function = LED_FUNCTION_STATUS;
 			gpios = <&gpio4 RK_PC5 GPIO_ACTIVE_HIGH>;
-		};
-	};
-
-	hdmi-con {
-		compatible = "hdmi-connector";
-		type = "a";
-
-		port {
-			hdmi_con_in: endpoint {
-				remote-endpoint = <&hdmi_out_con>;
-			};
+			default-state = "on";
 		};
 	};
 
@@ -286,6 +279,14 @@
 &hdmi {
 	avdd-0v9-supply = <&vdda0v9_image>;
 	avdd-1v8-supply = <&vcca1v8_image>;
+	/* HDMI PHY 校准表：照抄同内核树官方 EVB（rk3568-evb.dtsi），不自造。 */
+	rockchip,phy-table =
+		<92812500  0x8009 0x0000 0x0270>,
+		<165000000 0x800b 0x0000 0x026d>,
+		<185625000 0x800b 0x0000 0x01ed>,
+		<297000000 0x800b 0x0000 0x01ad>,
+		<594000000 0x8029 0x0000 0x0088>,
+		<000000000 0x0000 0x0000 0x0000>;
 	status = "okay";
 };
 
@@ -293,16 +294,17 @@
 	status = "okay";
 };
 
-&hdmi {
-	ports {
-		port@1 {
-			reg = <1>;
+&hdmi_in_vp1 {
+	status = "disabled";
+};
 
-			hdmi_out_con: endpoint {
-				remote-endpoint = <&hdmi_con_in>;
-			};
-		};
-	};
+/* HDMI 路由：BSP 的 display-subsystem 里 route-hdmi 默认是
+   「disabled + connect = <&vp1_out_hdmi>」。不覆盖它，显示子系统就找不到
+   可用的 HDMI 路由（实测 dmesg: drm_bridge_attach -22、hdmi probe 失败、
+   /sys/class/drm 下没有任何 HDMI 连接器）。官方 EVB 的写法就是下面这两行。 */
+&route_hdmi {
+	status = "okay";
+	connect = <&vp0_out_hdmi>;
 };
 
 &hdmi_sound {
@@ -834,6 +836,12 @@
 };
 
 &jpegd_mmu {
+	status = "okay";
+};
+
+/* 硬件编解码服务节点：官方 EVB 显式开启。缺它则 /dev/mpp_service 不存在，
+   rkmpp（jellyfin/ffmpeg 硬转码等）报 "open vcodec_service failed"。 */
+&mpp_srv {
 	status = "okay";
 };
 

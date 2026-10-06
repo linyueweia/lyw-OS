@@ -142,6 +142,23 @@ userpatches/overlay/             载荷 roceos-payload.tar.gz，在 chroot 内�
 工作流以固定 sha256 断言校验（内容一变立即失败）。构建后另有回读自证：镜像内必须齐备
 上述组件、`default` 站点必须已移除，并 `chroot` 实测导入 Flask 栈。
 
+### 显示 / LED / 硬件编解码（2026-10，实机定位）
+
+这三项都是**实机 dmesg + 与同内核树官方参考件逐项对照**定位的，全部落在设备树：
+
+| 现象 | 根因 | 修复 |
+|---|---|---|
+| **HDMI 无画面**（`/sys/class/drm` 下连 HDMI 连接器都没有） | ① 板级 DTS 从 OpenWrt 侧移植时自造了 `hdmi-con` 连接器 + `port@1`；本内核 BSP 的 dw-hdmi 自己会创建 connector，两者共存使 `drm_bridge_attach` 返回 `-22`，HDMI 整体 probe 失败（实测 `dwhdmi-rockchip: probe of fe0a0000.hdmi failed with error -22`）<br>② BSP dtsi 里 `route-hdmi` 默认是 `disabled` 且 `connect = <&vp1_out_hdmi>`，而板级只开了 `hdmi_in_vp0`，路由对不上 | 删除 `hdmi-con` 与 `port@1`；新增 `&route_hdmi { status = "okay"; connect = <&vp0_out_hdmi>; }`；补 `rockchip,phy-table`（照抄 EVB） |
+| **电源灯/系统灯不亮** | `leds-gpio` 驱动探测时会把**没有 `default-state` 的 LED 置灭**（内核默认 off）。iStoreOS 那边靠 OpenWrt 用户态按 `led-boot`/`led-running` 属性点亮，iNextOS 没有这套用户态 | 两个 LED 加 `default-state = "on"`，不依赖任何用户态脚本 |
+| **硬件转码不可用**（`/dev/mpp_service` 不存在，rkmpp 报 `open vcodec_service failed`） | 早前按基线清单补 IP 块时**漏了 `&mpp_srv`**（官方 EVB 明确开启它；只把 vdpu/vepu/rkvdec/rkvenc 置 okay 是不够的） | 新增 `&mpp_srv { status = "okay"; }` |
+
+> 参考基准：**同内核树**（`armbian/linux-rockchip` @ `rk-6.1-rkr5.1`）自带的官方 EVB
+> `rk3568-evb.dtsi`。所有写法以它为准，不照搬别的内核树、也不自造节点。
+
+CI 构建后会回读 DTB 逐项断言：两个 LED 的 `default-state`、`/mpp-srv` 与
+`route-hdmi` 的 `status`、`route-hdmi` 的 `connect` 必须等于 HDMI `port@0/endpoint@0`
+所连的 VP，且 `/hdmi-con` 必须不存在。
+
 ## 使用
 
 1. **Actions → Build iNextOS for LYT T68M → Run workflow**（或 push 到 `main`）
