@@ -148,14 +148,14 @@ jobs:
       - name: Build iNextOS image
         run: |
           cd build
+          # 注释必须放在整条命令【之前】：放进 "\" 续行之间会把后续参数整段注释掉
+          # （曾因此丢掉 KERNEL_CONFIGURE=no，框架弹出交互式菜单并以 error 43 失败）
+          # ENABLE_EXTENSIONS 是扩展白名单（框架逐个 enable_extension），必须含自建扩展
           ./compile.sh build \
             BOARD=lyt-t68m \
             BRANCH=vendor \
             RELEASE=trixie \
-            # 关键：ENABLE_EXTENSIONS 是扩展白名单，只有列表里的扩展会被加载
-          # （框架 extensions.sh 用 `enable_extension` 逐个启用；此前只写了
-          #  istorenext，导致 t68m-roceos 扩展从未加载、防护代码从未执行）
-          ENABLE_EXTENSIONS="istorenext,t68m-roceos" \
+            ENABLE_EXTENSIONS="istorenext,t68m-roceos" \
             BUILD_MINIMAL=no \
             BUILD_DESKTOP=no \
             KERNEL_CONFIGURE=no \
