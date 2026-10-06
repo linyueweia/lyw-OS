@@ -156,12 +156,15 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 	local fail=0
 	for f in opt/roceos/roceos opt/roceos/www/index.html opt/roceos-ai/server.py \
 		etc/systemd/system/roceos.service \
-		etc/systemd/system/multi-user.target.wants/roceos.service \
-		etc/systemd/system/multi-user.target.wants/roceos-ai.service \
-		etc/systemd/system/multi-user.target.wants/roceos-vision.service \
 		etc/nginx/sites-available/roceos.conf etc/nginx/ssl/roceos.key \
 		etc/systemd/system-preset/90-t68m-roceos.preset; do
 		[[ -e "${SDCARD}/${f}" ]] || { display_alert "missing ${f}" "$EXTENSION" "err"; fail=1; }
+	done
+	# 三个启用链接必须用 -L 判定：它们是符号链接，链接目标 /etc/systemd/system/*.service
+	# 是【镜像内】绝对路径，宿主机上不存在，用 -e 会跟随链接而误判为缺失。
+	for f in roceos.service roceos-ai.service roceos-vision.service; do
+		[[ -L "${SDCARD}/etc/systemd/system/multi-user.target.wants/${f}" ]] || \
+			{ display_alert "missing wants link ${f}" "$EXTENSION" "err"; fail=1; }
 	done
 	[[ -L "${SDCARD}/etc/nginx/sites-enabled/roceos.conf" ]] || { display_alert "nginx site not enabled" "$EXTENSION" "err"; fail=1; }
 	# ── 更新防护与 ttyFIQ0 自证 ──

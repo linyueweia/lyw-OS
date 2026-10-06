@@ -350,7 +350,7 @@ jobs:
 
           # (4) roceos 网页后台自证：应用本体 / 服务启用 / nginx 站点 / Flask 栈。
           #     背景：官方镜像自带这一整套；缺了它 192.168.100.1 只显示 nginx 欢迎页。
-          #     本工作流经 userpatches/customize-image.sh 在构建阶段注入，此处回读自证。
+          #     本工作流经 userpatches/extensions/t68m-roceos.sh（框架可用扩展）在构建阶段注入，此处回读自证。
           echo "--- (4) 校验 roceos 网页后台（构建阶段注入结果） ---"
           sudo mkdir -p /mnt/ir
           sudo mount ${LOOP}p2 /mnt/ir
@@ -359,11 +359,17 @@ jobs:
                    opt/roceos-ai/librkllmrt.so \
                    etc/systemd/system/roceos.service etc/systemd/system/roceos-ai.service \
                    etc/systemd/system/roceos-vision.service \
-                   etc/systemd/system/multi-user.target.wants/roceos.service \
-                   etc/systemd/system/multi-user.target.wants/roceos-ai.service \
-                   etc/systemd/system/multi-user.target.wants/roceos-vision.service \
                    etc/nginx/sites-available/roceos.conf etc/nginx/ssl/roceos.crt etc/nginx/ssl/roceos.key; do
             if [ -e "/mnt/ir/$f" ]; then printf "    ✅ %s\n" "$f"; else printf "    ❌ 缺 %s\n" "$f"; rfail=1; fi
+          done
+          # 三个启用链接必须用 -L：它们是符号链接，目标是镜像内绝对路径
+          # /etc/systemd/system/*.service，用 -e 会跟随链接、在宿主机上解析失败而误判缺失。
+          for s in roceos roceos-ai roceos-vision; do
+            if [ -L "/mnt/ir/etc/systemd/system/multi-user.target.wants/${s}.service" ]; then
+              printf "    ✅ %s.service 已启用\n" "$s"
+            else
+              printf "    ❌ %s.service 未启用\n" "$s"; rfail=1
+            fi
           done
           if [ -L /mnt/ir/etc/nginx/sites-enabled/roceos.conf ]; then
             echo "    ✅ nginx 站点已启用"; else echo "    ❌ nginx 站点未启用"; rfail=1; fi
