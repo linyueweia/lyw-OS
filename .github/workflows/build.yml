@@ -217,6 +217,15 @@ jobs:
           else
             echo "    ✅ /hdmi-con 已移除"
           fi
+          # PCIe3 分叉：两个独立 x1 口（1+1）必须开启 rockchip,bifurcation，
+          # 否则 PHY 停在聚合模式、第二路 2.5G 拿不到链路（实测 LTSSM 停在 0x1）。
+          for n in /pcie@fe270000 /pcie@fe280000; do
+            if sudo fdtget -p "$DT" "$n" 2>/dev/null | grep -qi 'bifurcation'; then
+              echo "    ✅ $n rockchip,bifurcation"
+            else
+              echo "    ❌ $n 缺 rockchip,bifurcation（第二路 2.5G 会失败）"; dfail=1
+            fi
+          done
           [ "$dfail" = 0 ] || { echo "!! LED / HDMI 路由 / mpp_srv 自证失败"; exit 1; }
           echo "    ✅ LED / HDMI 路由 / mpp_srv 自证通过"
 

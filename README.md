@@ -175,6 +175,39 @@ CI 构建后会回读 DTB 逐项断言：两个 LED 的 `default-state`、`/mpp-
 随载荷一并装入，并且**两份路径都放**（驱动编译进的是全大写 `aic8800/SDIO/aic8800D80/`，
 厂商用的是小写 `aic8800/sdio/`），避免大小写差异导致加载失败。
 
+### 第二个 2.5G 口（pcie3x1）链路训练失败 —— PHY 缺分叉配置（2026-10）
+
+现象：`lspci` 里只有一个 RTL8125、少一个 `eth3`；dmesg 里
+`rk-pcie 3c0400000.pcie: PCIe Linking... LTSSM is 0x1` 反复刷屏后
+`PCIe Link Fail / failed to initialize host`。
+
+定位过程（逐层排除，全部有证据）：
+1. 与厂商 T68M DTB **逐属性对比** pcie3x1/x2/phy 三个节点：只差 phandle 编号与
+   内核树命名（`pcie-dbi` vs `dbi`），**实质等价** → 不是设备树差异；
+2. PCIe3 PHY 初始化正常（无 `lock failed`）；两个控制器都被驱动成功 probe；
+3. 连"通用 `dw-pcie` 驱动抢先匹配失败"这一怀疑也被排除 —— **两路都被它抢过、行为一致**；
+4. 对照厂商 iStoreOS（内核 6.12）的 dmesg，差别只在三行：
+
+```
+phy phy-fe8c0000.phy.7: lane number 0, val 1
+phy phy-fe8c0000.phy.7: lane number 1, val 2
+phy phy-fe8c0000.phy.7: bifurcation enabled      ← 我们这边没有这一行
+```
+
+**根因**：PCIe3 PHY 需要工作在**分叉（bifurcation）**模式才能同时支撑两条独立 x1 链路。
+我们内核的 BSP dtsi 在这个节点上就注释着：
+
+```
+/* rockchip,bifurcation; lane1 when using 1+1 */
+```
+
+即 BSP 要求板级 DTS 在"1+1"（两个独立 x1 口）配置下显式开启该属性；我们（以及厂商
+的 DTS）都没有写——厂商之所以不需要，是因为其 6.12 内核的 PHY 驱动会按 `data-lanes`
+**自动**判定分叉，而我们 6.1 BSP 的驱动不会。
+
+**修复**：在 `&pcie3x1` 与 `&pcie3x2` 两个节点上各加一行 `rockchip,bifurcation;`。
+同内核树的其他 rk3568 NAS 板（`hinlink-h6xk`、`radxa-e25`、`easepi-a2`）都是这么写的。
+
 ## 使用
 
 1. **Actions → Build iNextOS for LYT T68M → Run workflow**（或 push 到 `main`）

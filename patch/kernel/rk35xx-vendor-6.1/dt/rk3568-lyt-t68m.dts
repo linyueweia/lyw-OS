@@ -587,6 +587,12 @@
 
 &pcie3x1 {
 	num-lanes = <1>;
+	/* 1+1（两路独立 x1）：BSP 的 rk3568.dtsi 在本节点就注释着这条属性要求
+	   'rockchip,bifurcation; laneN when using 1+1'。不开分叉时 PCIe3 PHY 停在
+	   聚合模式，只有一路 x1 能训练成功——实测另一路 dmesg 停在
+	   'PCIe Linking... LTSSM is 0x1' 且 lspci 里少一个 RTL8125。
+	   同内核树的其他 rk3568 NAS 板（hinlink-h6xk / radxa-e25 / easepi-a2）同样开启。 */
+	rockchip,bifurcation;
 	reset-gpios = <&gpio3 RK_PA1 GPIO_ACTIVE_HIGH>;
 	vpcie3v3-supply = <&vcc3v3_pcie>;
 	status = "okay";
@@ -605,6 +611,12 @@
 
 &pcie3x2 {
 	num-lanes = <1>;
+	/* 1+1（两路独立 x1）：BSP 的 rk3568.dtsi 在本节点就注释着这条属性要求
+	   'rockchip,bifurcation; laneN when using 1+1'。不开分叉时 PCIe3 PHY 停在
+	   聚合模式，只有一路 x1 能训练成功——实测另一路 dmesg 停在
+	   'PCIe Linking... LTSSM is 0x1' 且 lspci 里少一个 RTL8125。
+	   同内核树的其他 rk3568 NAS 板（hinlink-h6xk / radxa-e25 / easepi-a2）同样开启。 */
+	rockchip,bifurcation;
 	reset-gpios = <&gpio2 RK_PD6 GPIO_ACTIVE_HIGH>;
 	vpcie3v3-supply = <&vcc3v3_pcie>;
 	status = "okay";
