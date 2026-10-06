@@ -52,6 +52,25 @@ jobs:
           [ "$n_after" -ge 1 ] || { echo "!! DDR 固件替换失败"; exit 1; }
           grep -n 'rk3568_ddr' "$DDRINC" | sed 's/^/    /'
 
+      - name: Fetch roceos web-UI payload into userpatches/overlay
+        # 官方 iNextOS 镜像自带 roceos 网页后台（/opt/roceos + /opt/roceos-ai +
+        # 3 个 systemd 服务 + nginx 站点与证书 + Flask 栈），本适配仓库原先缺这一整套，
+        # 表现为板子能启动、但 192.168.100.1 只显示 nginx 默认欢迎页。
+        # 这里把载荷经框架正规通道 userpatches/overlay（chroot 内即 /tmp/overlay）
+        # 交给 customize-image.sh，在**构建阶段**装进镜像，而不是事后往镜像里替换文件。
+        run: |
+          set -e
+          mkdir -p build/userpatches/overlay
+          URL="https://github.com/linyueweia/lyw-OS/releases/download/roceos-payload-v1/roceos-payload.tar.gz"
+          curl -fsSL -o build/userpatches/overlay/roceos-payload.tar.gz "$URL"
+          # 载荷指纹固定断言：内容一旦变化立即失败，不留"以为改了其实没改"的余地。
+          echo "540c32ff39fc5cbac3d6326a45e776d46208967e042f9eebe901574dcbb2a26f  build/userpatches/overlay/roceos-payload.tar.gz" | sha256sum -c -
+          cp -v t68m/customize-image.sh build/userpatches/customize-image.sh
+          ls -lh build/userpatches build/userpatches/overlay
+          echo "--- 载荷关键文件抽查:"
+          tar tzf build/userpatches/overlay/roceos-payload.tar.gz \
+            | grep -E 'opt/roceos/roceos$|opt/roceos/www/index.html|roceos-ai/server.py|roceos-ai/librkllmrt.so|system/roceos.*\.service|sites-available/roceos.conf|ssl/roceos.key'
+
       - name: Set up QEMU (binfmt_misc for arm64 cross-build)
         uses: docker/setup-qemu-action@v3
         with:
@@ -192,6 +211,39 @@ jobs:
 
           sync
           sudo umount /mnt/ib
+
+          # (4) roceos 网页后台自证：应用本体 / 服务启用 / nginx 站点 / Flask 栈。
+          #     背景：官方镜像自带这一整套；缺了它 192.168.100.1 只显示 nginx 欢迎页。
+          #     本工作流经 userpatches/customize-image.sh 在构建阶段注入，此处回读自证。
+          echo "--- (4) 校验 roceos 网页后台（构建阶段注入结果） ---"
+          sudo mkdir -p /mnt/ir
+          sudo mount ${LOOP}p2 /mnt/ir
+          rfail=0
+          for f in opt/roceos/roceos opt/roceos/www/index.html opt/roceos-ai/server.py \
+                   opt/roceos-ai/librkllmrt.so \
+                   etc/systemd/system/roceos.service etc/systemd/system/roceos-ai.service \
+                   etc/systemd/system/roceos-vision.service \
+                   etc/systemd/system/multi-user.target.wants/roceos.service \
+                   etc/systemd/system/multi-user.target.wants/roceos-ai.service \
+                   etc/systemd/system/multi-user.target.wants/roceos-vision.service \
+                   etc/nginx/sites-available/roceos.conf etc/nginx/ssl/roceos.crt etc/nginx/ssl/roceos.key; do
+            if [ -e "/mnt/ir/$f" ]; then printf "    ✅ %s\n" "$f"; else printf "    ❌ 缺 %s\n" "$f"; rfail=1; fi
+          done
+          if [ -L /mnt/ir/etc/nginx/sites-enabled/roceos.conf ]; then
+            echo "    ✅ nginx 站点已启用"; else echo "    ❌ nginx 站点未启用"; rfail=1; fi
+          if [ -L /mnt/ir/etc/nginx/sites-enabled/default ] || [ -e /mnt/ir/etc/nginx/sites-enabled/default ]; then
+            echo "    ❌ default 站点仍在（与 roceos.conf 抢 default_server，nginx 会起不来）"; rfail=1
+          else
+            echo "    ✅ default 站点已移除"
+          fi
+          echo "--- 主程序架构:"; file /mnt/ir/opt/roceos/roceos | sed 's/^/    /'
+          echo "--- Flask 栈（chroot 实测导入，依赖前面注册的 QEMU binfmt）:"
+          sudo chroot /mnt/ir /usr/bin/python3 -c "import importlib.metadata as md; print('    ' + ' '.join(f'{p}={md.version(p)}' for p in ('flask','werkzeug','jinja2','itsdangerous','markupsafe','blinker')))" \
+            || { echo "    !! Flask 栈不可导入"; rfail=1; }
+          sudo umount /mnt/ir
+          [ "$rfail" = 0 ] || { echo "!! roceos 网页后台自证失败"; exit 1; }
+          echo "    ✅ roceos 网页后台自证通过"
+
           sudo losetup -d "$LOOP"
 
           if [ -f "${IMG}.xz" ]; then

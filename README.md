@@ -56,7 +56,7 @@
 
 ```
 BootROM → idbloader.img @32KiB → u-boot.itb @8MiB
-          ⚠️ 这两段由 CI 在构建后**用 T68M 厂商签名引导件覆盖**（见下）
+          ⚠️ idbloader 内嵌的 DDR 固件由 CI 在**编译前**替换为 T68M 实测可用版本（见下）
         → bootcmd = bootflow scan -lb              (boot_targets = mmc1(TF) mmc0(eMMC) …)
         → 引导分区(p1, FAT16 "armbi_boot") 上的 boot.scr（armbian 标准）
         → Image + rk3568-lyt-t68m.dtb → booti
@@ -115,6 +115,33 @@ EasePi R1 上可用，但在 **T68M 上 DDR 训练失败** —— 而训练发�
 CI 构建后会回读引导分区里的 DTB，用 `fdtget` **断言上述节点 status=okay**，
 不通过则整步失败 —— 避免"以为改了其实没生效"。
 
+### 补齐 roceos 网页后台（2026-10）
+
+官方 iNextOS 镜像自带一整套网页后台（`/opt/roceos` 主程序 + `/opt/roceos-ai` AI 服务 +
+`roceos{,-ai,-vision}.service` + nginx 站点与证书 + Flask 栈），**本适配仓库原先缺失** ——
+现象是板子能正常启动，但 `192.168.100.1` 只显示 nginx 默认欢迎页，管理界面完全是空的。
+
+与官方 Easepi-r1 镜像做穷尽式审计（安装包 / systemd 单元文件 / 启用状态 / 关键目录 /
+内核模块 / Python 依赖）后的结论：缺失项**恰好只有这一整套**，其它（内核模块、网口、
+内核配置等）零差异。
+
+修复同样做在**构建阶段**，走框架原生的 customize 钩子，而不是事后往镜像里塞文件：
+
+```
+userpatches/customize-image.sh   本仓库 customize-image.sh，框架自动拷入 chroot 并执行
+userpatches/overlay/             载荷 roceos-payload.tar.gz，在 chroot 内即 /tmp/overlay
+```
+
+钩子做的事：安装应用本体 → 装 3 个 systemd 服务并显式建立 `multi-user.target.wants`
+启用链接 → 装 nginx 站点与证书（**移除 `default` 站点**：它与 `roceos.conf` 都声明
+`listen 80 default_server`，共存会让 nginx 启动失败）→ Flask 栈优先用 `apt` 安装、
+失败则回退到载荷内文件 → 全部逐项自证，任一失败即整步失败。
+
+载荷来源：从**官方 Easepi-r1 镜像**中提取（就是官方自己用的那一份），发布为
+[release `roceos-payload-v1`](https://github.com/linyueweia/lyw-OS/releases/tag/roceos-payload-v1)，
+工作流以固定 sha256 断言校验（内容一变立即失败）。构建后另有回读自证：镜像内必须齐备
+上述组件、`default` 站点必须已移除，并 `chroot` 实测导入 Flask 栈。
+
 ## 使用
 
 1. **Actions → Build iNextOS for LYT T68M → Run workflow**（或 push 到 `main`）
@@ -136,11 +163,15 @@ config/boards/lyt-t68m.csc                     板级配置（BOOT_FDT_FILE / �
 patch/kernel/rk35xx-vendor-6.1/dt/*.dts        板级设备树（框架会自动拷入内核并改 Makefile）
 kernel-files/rk3568-lyt-t68m.dtb              板级 DTB（用于 boot 分区）
 kernel-files/{idbloader.img,u-boot.itb}      仅作参考备份，**不再注入镜像**
-.github/workflows/build.yml                    CI：云编译 + 镜像后处理
+customize-image.sh                            框架钩子：构建阶段补齐 roceos 网页后台（载荷走 userpatches/overlay）
+.github/workflows/build.yml                    CI：云编译 + 镜像后处理 + DDR / 设备树 / roceos 三重回读自证
 ```
 
 ## 已验证 / 待验证
 
 - ✅ 板级 DTS 在 6.1 vendor 内核树中 `cpp + dtc` 编译 **0 Error**，产物外设状态与本机实机逐项一致
 - ✅ 引导件 md5 与 T68M 实测可用件一致（`idbloader 2adb84fb…` / `u-boot.itb 095b6fff…`）
-- ⏳ **实机启动验证**（K1 的教训：结构全对也可能实机不通，必须真机验证）
+- ✅ **实机启动验证通过**：DDR 固件升级后 T68M 已能正常启动（此前为「上电后串口/HDMI 完全无输出」）
+- ✅ **roceos 网页后台**：构建阶段注入方案已在本地镜像上逐项验证（组件齐备 / `default` 站点已移除 /
+  `nginx -t` 通过 / Flask 栈可导入）
+- ⏳ **CI 端到端验证**：新工作流一次完整构建的产物仍需实机复验
