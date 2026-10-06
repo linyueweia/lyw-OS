@@ -4,10 +4,64 @@ on:
   workflow_dispatch:
   push:
     branches: [ main ]
+    paths-ignore:
+      # 仅自动记录上游指纹的提交：镜像内容不变，无需重建
+      - 'last-upstream-sha'
+  schedule:
+    # 每日 03:00（CST / UTC+8）检查上游框架是否更新，有更新则自动编译最新固件
+    - cron: '0 19 * * *'
 
 jobs:
+  # ── 上游跟踪：比对 jjm2473/armbian-easepi 的 easepi-v26.02 分支 HEAD ──
+  upstream:
+    name: Check upstream framework (armbian-easepi)
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write        # 需要把新的上游指纹提交回仓库
+    outputs:
+      changed: ${{ steps.cmp.outputs.changed }}
+      sha: ${{ steps.cmp.outputs.sha }}
+    steps:
+      - name: Checkout board adaptation
+        uses: actions/checkout@v4
+
+      - name: Compare upstream HEAD with recorded sha
+        id: cmp
+        run: |
+          set -eu
+          UP=$(curl -fsSL \
+            -H "Authorization: Bearer ${{ github.token }}" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/jjm2473/armbian-easepi/branches/easepi-v26.02" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["commit"]["sha"])')
+          OLD=$(cat last-upstream-sha 2>/dev/null | tr -d '\n' || echo none)
+          echo "上游 easepi-v26.02 HEAD : $UP"
+          echo "本仓库记录的指纹         : $OLD"
+          if [ "$UP" = "$OLD" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "上游无变化，跳过构建。"
+          else
+            echo "changed=true"  >> "$GITHUB_OUTPUT"
+            echo "sha=$UP"       >> "$GITHUB_OUTPUT"
+            echo "上游已更新，将编译最新固件。"
+          fi
+
+      - name: Record new upstream sha
+        if: steps.cmp.outputs.changed == 'true'
+        run: |
+          set -eu
+          echo "${{ steps.cmp.outputs.sha }}" > last-upstream-sha
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add last-upstream-sha
+          git commit -m "chore: 记录上游框架指纹 ${{ steps.cmp.outputs.sha }} [skip ci]"
+          git push
+
   build:
     name: Build iNextOS image (LYT T68M / RK3568)
+    needs: upstream
+    # 手动触发 / push 时总是构建；定时任务只在上游有更新时构建
+    if: github.event_name != 'schedule' || needs.upstream.outputs.changed == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     steps:

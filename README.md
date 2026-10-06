@@ -208,6 +208,30 @@ phy phy-fe8c0000.phy.7: bifurcation enabled      ← 我们这边没有这一行
 **修复**：在 `&pcie3x1` 与 `&pcie3x2` 两个节点上各加一行 `rockchip,bifurcation;`。
 同内核树的其他 rk3568 NAS 板（`hinlink-h6xk`、`radxa-e25`、`easepi-a2`）都是这么写的。
 
+## 自动跟踪上游（每日检查 + 自动编译）
+
+`.github/workflows/build.yml` 有两个作业：
+
+1. `upstream` —— 读取 `jjm2473/armbian-easepi` 的 `easepi-v26.02` 分支 HEAD，
+   与仓库根目录的 `last-upstream-sha` 比对；
+2. `build` —— 上游有变化时（或手动触发 / push 到 main）编译镜像。
+
+| 事件 | 行为 |
+|---|---|
+| `workflow_dispatch`（手动） | 总是构建 |
+| `push` 到 `main` | 总是构建（仅改 `last-upstream-sha` 的提交被 `paths-ignore` 跳过） |
+| `schedule` 每日 03:00 CST | 上游 HEAD 变过 → 记录新指纹并自动构建；没变 → 数秒内跳过 |
+
+构建始终 checkout 上游分支的**最新提交**，所以"跟踪上游"就等于"上游一动就出一版新固件"。
+上游更新频率约每 2–3 周一次。
+
+注意：
+
+- 上游改了框架而本仓库补丁没跟上时，构建的**回读自证会直接失败**（如 DDR 固件的
+  sed 断言、设备树断言），不会产出"以为改了其实没改"的镜像；
+- GitHub 会在仓库 60 天无提交时暂停定时任务，本仓库的指纹提交会自动维持它；
+- 想立刻出一版：Actions → *Build iNextOS for LYT T68M* → Run workflow。
+
 ## 使用
 
 1. **Actions → Build iNextOS for LYT T68M → Run workflow**（或 push 到 `main`）
