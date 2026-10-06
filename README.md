@@ -299,6 +299,20 @@ usbhost_dwc3 = "/usbhost/usb@fd000000";
 
 CI 自证：构建后回读 DTB，断言 `/usbdrd`、`/usbhost` 均为 `okay`。
 
+**实机验证（2026-10-06 冷启动后）**：两个 DWC3 控制器随之出现并绑定驱动 ——
+
+```
+平台设备 : fcc00000.usb、fd000000.usb（此前完全不存在）
+驱动绑定 : dwc3 → fcc00000.usb/fd000000.usb；dwc3-of-simple → usbdrd/usbhost
+           xhci-hcd → xhci-hcd.0.auto（USB3 root hub 出现）
+lsusb    : 2c7c:0125 Quectel ... EC25 LTE modem（板载模组型号 EM05-CN）
+串口     : /dev/ttyUSB0-3     网口: cdc_ether 注册 eth4
+ModemManager: /org/freedesktop/ModemManager1/Modem/0 [Quectel] EM05-CN
+```
+
+即：本板 4G 模块走的是 DWC3（USB3）通道，父节点未使能时整条通道不存在，这正是
+「iStoreOS 能认、iNextOS 认不到」的原因。
+
 ## 使用
 
 1. **Actions → Build iNextOS for LYT T68M → Run workflow**（或 push 到 `main`）
