@@ -75,10 +75,13 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 
 	rm -rf "$stage"
 
-	# ── 启用服务（官方同款写法）───────────────────────────────
-	chroot_sdcard systemctl --no-reload enable roceos.service
-	chroot_sdcard systemctl --no-reload enable roceos-ai.service
-	chroot_sdcard systemctl --no-reload enable roceos-vision.service
+	# ── 启用服务 ──────────────────────────────────────────────
+	# 不用 chroot_sdcard systemctl enable：实测（构建 37423507035）在构建容器里
+	# 它不会在镜像内生成 multi-user.target.wants 链接——自证因此失败。直接建链接可靠。
+	mkdir -p "${SDCARD}/etc/systemd/system/multi-user.target.wants"
+	for s in roceos.service roceos-ai.service roceos-vision.service; do
+		ln -sf "/etc/systemd/system/${s}" "${SDCARD}/etc/systemd/system/multi-user.target.wants/${s}"
+	done
 
 	# ── 再补一份 systemd preset ────────────────────────────────
 	# 万一后续流程跑了 systemctl preset-all（会按 preset 重置启用状态），
