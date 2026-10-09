@@ -336,7 +336,7 @@ ENABLE_EXTENSIONS="istorenext"        # 只有白名单里的扩展会被 enable
 ## 使用
 
 1. **Actions → Build iNextOS for LYT T68M → Run workflow**（或 push 到 `main`）
-2. 构建完成后下载 artifact `inextos-lyt-t68m`（含 `.img` 与 `.img.xz`）
+2. 构建完成后下载 artifact `inextos-lyt-t68m`（**仅含 `.img.xz` + `.sha` 校验文件**，raw `.img` 不再打包 —— 省一半下载量；刷机只用 xz）
 3. 刷写（**建议先写 TF 卡验证**，U-Boot 的 `boot_targets` 首位是 `mmc1`，插卡即走卡，eMMC 原系统零改动）：
 
 ```sh

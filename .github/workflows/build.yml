@@ -353,13 +353,15 @@ jobs:
           else
             echo "    ❌ udev 网卡命名规则缺失/错误"; dfail=1
           fi
-          # 唯一自定义项
-          if [ "$(cat "$PROT/root/.default-network" 2>/dev/null)" = "DEFAULT_INTERFACE=eth0" ]; then
+          # 唯一自定义项（/root 是 0700，本步骤 runner 是非 root：cat 必须 sudo，
+          # 否则被权限拦下、2>/dev/null 吞掉报错输出空串 → 误判失败。/etc 是 755
+          # 所以同块其他断言当时能过 —— 踩过一次，两个 cat 一律 sudo）
+          if [ "$(sudo cat "$PROT/root/.default-network" 2>/dev/null)" = "DEFAULT_INTERFACE=eth0" ]; then
             echo "    ✅ .default-network = DEFAULT_INTERFACE=eth0（唯一自定义）"
           else
-            echo "    ❌ .default-network 不是 DEFAULT_INTERFACE=eth0"; dfail=1
+            echo "    ❌ .default-network 不是 DEFAULT_INTERFACE=eth0（缺 sudo？/root=0700）"; dfail=1
           fi
-          if [ "$(cat "$PROT/etc/eth_order" 2>/dev/null)" = "fe2a0000.ethernet,fe010000.ethernet,0002:21:00.0,0001:11:00.0" ]; then
+          if [ "$(sudo cat "$PROT/etc/eth_order" 2>/dev/null)" = "fe2a0000.ethernet,fe010000.ethernet,0002:21:00.0,0001:11:00.0" ]; then
             echo "    ✅ /etc/eth_order 顺序表"
           else
             echo "    ❌ /etc/eth_order 内容不符"; dfail=1
@@ -474,11 +476,12 @@ jobs:
 
       - name: Upload iNextOS artifacts
         if: always()
+        # 只打包压缩版：raw .img 与 .img.xz 内容等价（raw 里全是零字节区，
+        # zip 再压一遍纯属浪费带宽/存储/下载时间），刷机也只用 xz。
         uses: actions/upload-artifact@v4
         with:
           name: inextos-lyt-t68m
           path: |
-            build/output/images/*.img
             build/output/images/*.img.xz
             build/output/images/*.sha
             build/output/debs/*.deb
