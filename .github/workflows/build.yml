@@ -318,6 +318,55 @@ jobs:
           else
             echo "    ❌ ttyFIQ0 getty 未屏蔽（启动会等设备超时）"; dfail=1
           fi
+
+          # ── 网络栈对齐官方标准（出厂不带 NetworkManager）+ 唯一自定义 .default-network=eth0 ──
+          # 必须在 $PROT 挂载窗口内：umount 之后会退化成查宿主机根目录而误判（见 562dfc4）。
+          if [ -e "$PROT/usr/sbin/NetworkManager" ] || [ -e "$PROT/usr/bin/nmcli" ]; then
+            echo "    ❌ NetworkManager 二进制仍在（未对齐官方标准）"; dfail=1
+          fi
+          for p in network-manager network-manager-openvpn netplan.io chrony; do
+            if grep -q "^Package: ${p}\$" "$PROT/var/lib/dpkg/status" 2>/dev/null; then
+              echo "    ❌ 多余网络包 ${p}（官方标准镜像不含）"; dfail=1
+            fi
+          done
+          if [ -e "$PROT/etc/systemd/system/multi-user.target.wants/NetworkManager.service" ]; then
+            echo "    ❌ NetworkManager 仍被启用"; dfail=1
+          fi
+          if [ -e "$PROT/etc/NetworkManager/NetworkManager.conf" ] || [ -d "$PROT/etc/netplan" ]; then
+            echo "    ❌ NM/netplan 配置残留"; dfail=1
+          fi
+          # 官方网络栈必须在位
+          for s in networking dnsmasq; do
+            if [ -L "$PROT/etc/systemd/system/multi-user.target.wants/${s}.service" ]; then
+              echo "    ✅ ${s}.service 启用"
+            else
+              echo "    ❌ ${s}.service 未启用（官方网络栈缺失）"; dfail=1
+            fi
+          done
+          if [ -L "$PROT/etc/systemd/system/networking.service.wants/istorenext-init-network.service" ]; then
+            echo "    ✅ istorenext-init-network 挂接 networking.service"
+          else
+            echo "    ❌ istorenext-init-network 未挂 networking.service"; dfail=1
+          fi
+          if grep -q 'KERNELS=="fe2a0000.ethernet", NAME:="eth0"' "$PROT/etc/udev/rules.d/70-persistent-net.rules" 2>/dev/null; then
+            echo "    ✅ udev 网卡命名（eth0=fe2a0000）"
+          else
+            echo "    ❌ udev 网卡命名规则缺失/错误"; dfail=1
+          fi
+          # 唯一自定义项
+          if [ "$(cat "$PROT/root/.default-network" 2>/dev/null)" = "DEFAULT_INTERFACE=eth0" ]; then
+            echo "    ✅ .default-network = DEFAULT_INTERFACE=eth0（唯一自定义）"
+          else
+            echo "    ❌ .default-network 不是 DEFAULT_INTERFACE=eth0"; dfail=1
+          fi
+          if [ "$(cat "$PROT/etc/eth_order" 2>/dev/null)" = "fe2a0000.ethernet,fe010000.ethernet,0002:21:00.0,0001:11:00.0" ]; then
+            echo "    ✅ /etc/eth_order 顺序表"
+          else
+            echo "    ❌ /etc/eth_order 内容不符"; dfail=1
+          fi
+          [ "$dfail" = 0 ] || { echo "!! 网络栈对齐官方标准 / .default-network 自证失败"; exit 1; }
+          echo "    ✅ 网络栈对齐官方标准 + .default-network=eth0 自证通过"
+
           sudo umount "$PROT"
 
           # USB3/DWC3 的两个 glue 父节点必须是 okay：只 enable 子节点时整棵子树

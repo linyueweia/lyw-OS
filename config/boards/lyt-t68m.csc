@@ -17,6 +17,15 @@ BOOT_SCENARIO="spl-blobs"
 IMAGE_PARTITION_TABLE="gpt"
 BOOTFS_TYPE="fat"
 
+# 网络栈：对齐官方标准镜像（官方 EasePi R1 实测 dpkg 里根本没有 network-manager）。
+# 框架默认 BUILD_MINIMAL=no → NETWORKING_STACK=network-manager，会装并启用
+# network-manager/network-manager-openvpn/netplan.io/chrony，与本板的
+# ifupdown-ng(networking.service) + roceos(建 br-lan1/挂口/写 dnsmasq 配置) + dnsmasq
+# 抢管网口 —— 自动生成的 Wired connection 档案会把口从网桥摘走，LAN 时好时坏的根因。
+# 显式置 none（框架 main-config 的正式取值，走 "Not adding networking extensions" 分支）。
+# 时间同步不受影响：ntpsec-ntpdate 由 istorenext 扩展带入（与官方 R1 同源）。
+declare -g NETWORKING_STACK="none"
+
 function post_family_tweaks__lyt_t68m_hold_dtb() {
 	display_alert "$BOARD" "Prevent armbian-upgrade from removing our dtb" "info"
 	chroot_sdcard apt-mark hold linux-dtb-vendor-rk35xx || true

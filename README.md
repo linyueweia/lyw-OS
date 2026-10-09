@@ -344,7 +344,7 @@ xz -dc iNextOS_*.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
 sync
 ```
 
-4. 首次启动：eth0 默认 DHCP；也可通过 `console=ttyS2,1500000` 串口查看
+4. 首次启动：镜像**不含 NetworkManager**，网络栈与官方标准镜像一致（`ifupdown-ng` 的 `networking.service` + roceos 建 `br-lan1`/挂口/下发 `dnsmasq` 配置 + `dnsmasq` DHCP/DNS；时间同步由 `ntpsec-ntpdate` 钩子负责）。默认管理口由本仓库写入的 `/root/.default-network`（`DEFAULT_INTERFACE=eth0`，**全仓库唯一网络自定义项**）经 `istorenext-init-network` 首启生成 `/etc/network/interfaces`（`192.168.100.1/24`）后自删该文件；eth0 默认 DHCP；也可通过 `console=ttyS2,1500000` 串口查看
 5. 登录：`root` / `password`
 
 ## 目录
