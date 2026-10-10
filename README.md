@@ -344,7 +344,7 @@ xz -dc iNextOS_*.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
 sync
 ```
 
-4. 首次启动：镜像**不含 NetworkManager**，网络栈与官方标准镜像一致（`ifupdown-ng` 的 `networking.service` + roceos 建 `br-lan1`/挂口/下发 `dnsmasq` 配置 + `dnsmasq` DHCP/DNS；时间同步由 `ntpsec-ntpdate` 钩子负责）。默认管理口由本仓库写入的 `/root/.default-network`（`DEFAULT_INTERFACE=eth0`，**全仓库唯一网络自定义项**）经 `istorenext-init-network` 首启生成 `/etc/network/interfaces`（`192.168.100.1/24`）后自删该文件；eth0 默认 DHCP；也可通过 `console=ttyS2,1500000` 串口查看
+4. 首次启动：镜像**不含 NetworkManager**，网络栈与官方标准镜像一致（`ifupdown-ng` 的 `networking.service` + roceos 建 `br-lan1`/挂口/下发 `dnsmasq` 配置 + `dnsmasq` DHCP/DNS；时间同步由 `ntpsec-ntpdate` 钩子负责）。默认管理口由本仓库写入的 `/root/.default-network`（`DEFAULT_INTERFACE=eth0`，**全仓库唯一网络自定义项**）经 `istorenext-init-network` 首启生成 `/etc/network/interfaces`（`192.168.100.1/24`）后自删该文件；eth0 默认 DHCP；也可通过 `console=ttyS2,1500000` 串口查看。**链路稳定性（2026-10 实机根因修复）**：`eth-eee-off.service` 开机关 GMAC 双口 EEE（BSP 6.1 rk_gmac 的 LPI 路径曾致 eth1 反复翻转/降速 10M Half，LPI 计数 69 vs eth0=1），`gmac-phy-hold.service` 用 gpioset 常驻把 `snps,reset-gpio`（gpio3 pin8=eth1/pin15=eth0，驱动 probe 后释放且无上下拉）定为物理高电平防悬空误复位；eth2/eth3（PCIe RTL8125）无此问题，CI 对修复件逐项自证
 5. 登录：`root` / `password`
 
 ## 目录

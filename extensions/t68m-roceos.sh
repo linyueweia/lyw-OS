@@ -91,11 +91,59 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 
 	rm -rf "$stage"
 
-	# ── 启用服务 ──────────────────────────────────────────────
+	# ── gpiod（gmac-phy-hold 依赖 gpioset；基础镜像已有，apt 兜底且幂等）──
+	chroot_sdcard apt-get install -y -qq gpiod || true
+
+	# ── eth1/eth0 链路稳定性（2026-10 实机根因修复）───────────────
+	# 实机取证（XCK, 三个 boot 全量日志）：eth1(GMAC1+RTL8211F) 自发翻转+
+	# 降速 10M/Half，且 irq_tx_path_in_lpi_mode_n=69（eth0 仅 1）——
+	# EEE/LPI 活动与故障完全重合；另 snps,reset-gpio 脉冲后被驱动释放、
+	# 无 pinctrl 上下拉（gpio3 pin8/pin15 悬空可误触发 PHY 复位）。
+	# 修复：① 开机关 GMAC 双口 EEE；② gpioset 常驻把两个复位脚定为
+	# 物理高电平（非复位态）。实机浸泡：1G/Full 恒定、LPI 冻结、零翻转。
+	# eth2/eth3(PCIe RTL8125) 与此病无关，不处理。
+	install -m 0755 /dev/stdin "${SDCARD}/usr/local/sbin/t68m-eee-off" <<-'EEE_EOF'
+		#!/bin/sh
+		# T68M: 关闭 GMAC 双口 EEE。BSP 6.1 rk_gmac 的 LPI 路径会引发
+		# eth1 翻转/降速（LPI=69 vs eth0=1）；PHY 探测在内核期完成，
+		# 此处无链路也可经 MDIO 写 PHY，失败不阻塞网络启动。
+		for ifc in eth0 eth1; do
+			ethtool --set-eee "$ifc" eee off 2>/dev/null || true
+		done
+		exit 0
+	EEE_EOF
+	cat > "${SDCARD}/etc/systemd/system/eth-eee-off.service" <<-'UNIT_EOF'
+		[Unit]
+		Description=Disable EEE on GMAC ports (T68M eth1 link-stability fix)
+		After=sysinit.target
+		Before=networking.service
+		[Service]
+		Type=oneshot
+		RemainAfterExit=yes
+		ExecStart=/usr/local/sbin/t68m-eee-off
+		[Install]
+		WantedBy=multi-user.target
+	UNIT_EOF
+	cat > "${SDCARD}/etc/systemd/system/gmac-phy-hold.service" <<-'UNIT_EOF'
+		[Unit]
+		Description=Hold GMAC PHY reset GPIOs inactive (T68M eth1 link-stability fix)
+		After=sysinit.target
+		[Service]
+		# gpio3(pin8=eth1, pin15=eth0) 物理高=非复位态；驱动只在 probe 时
+		# 请求过该脚（随后释放），multi-user 阶段持有无冲突。挂了自动拉起。
+		Type=simple
+		ExecStart=/usr/bin/gpioset -c gpiochip3 --consumer t68m-phy-hold 8=1 15=1
+		Restart=always
+		RestartSec=5
+		[Install]
+		WantedBy=multi-user.target
+	UNIT_EOF
+
+	# ── 启用服务 ──────────────────────────────────────────────────────
 	# 不用 chroot_sdcard systemctl enable：实测（构建 37423507035）在构建容器里
 	# 它不会在镜像内生成 multi-user.target.wants 链接——自证因此失败。直接建链接可靠。
 	mkdir -p "${SDCARD}/etc/systemd/system/multi-user.target.wants"
-	for s in roceos.service roceos-ai.service roceos-vision.service; do
+	for s in roceos.service roceos-ai.service roceos-vision.service eth-eee-off.service gmac-phy-hold.service; do
 		ln -sf "/etc/systemd/system/${s}" "${SDCARD}/etc/systemd/system/multi-user.target.wants/${s}"
 	done
 

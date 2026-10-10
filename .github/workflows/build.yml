@@ -366,8 +366,32 @@ jobs:
           else
             echo "    ❌ /etc/eth_order 内容不符"; dfail=1
           fi
-          [ "$dfail" = 0 ] || { echo "!! 网络栈对齐官方标准 / .default-network 自证失败"; exit 1; }
-          echo "    ✅ 网络栈对齐官方标准 + .default-network=eth0 自证通过"
+          # ── eth1 链路稳定性修复件（关 EEE + PHY 复位脚定电平）在位自证 ──
+          # 实机根因：eth1 的 EEE/LPI 活动（69 次 vs eth0=1）+ 复位脚悬空 → 翻转降速。
+          if [ -x "$PROT/usr/local/sbin/t68m-eee-off" ] && grep -q 'set-eee' "$PROT/usr/local/sbin/t68m-eee-off" 2>/dev/null; then
+            echo "    ✅ t68m-eee-off 脚本在位"
+          else
+            echo "    ❌ t68m-eee-off 脚本缺失"; dfail=1
+          fi
+          for u in eth-eee-off gmac-phy-hold; do
+            if [ -f "$PROT/etc/systemd/system/${u}.service" ] && [ -L "$PROT/etc/systemd/system/multi-user.target.wants/${u}.service" ]; then
+              echo "    ✅ ${u}.service 在位且已启用"
+            else
+              echo "    ❌ ${u}.service 缺失或未启用"; dfail=1
+            fi
+          done
+          if grep -q 'gpioset -c gpiochip3' "$PROT/etc/systemd/system/gmac-phy-hold.service" 2>/dev/null; then
+            echo "    ✅ gmac-phy-hold 持有 gpio3 pin8+pin15"
+          else
+            echo "    ❌ gmac-phy-hold 内容不符"; dfail=1
+          fi
+          if [ -x "$PROT/usr/bin/gpioset" ]; then
+            echo "    ✅ gpioset (gpiod) 在位"
+          else
+            echo "    ❌ gpioset 缺失（gmac-phy-hold 会起不来）"; dfail=1
+          fi
+          [ "$dfail" = 0 ] || { echo "!! 网络栈对齐官方标准 / .default-network / 链路稳定性自证失败"; exit 1; }
+          echo "    ✅ 网络栈对齐官方标准 + .default-network=eth0 + eth1 链路稳定性自证通过"
 
           sudo umount "$PROT"
 
