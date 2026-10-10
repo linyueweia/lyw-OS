@@ -366,14 +366,50 @@ jobs:
           else
             echo "    ❌ /etc/eth_order 内容不符"; dfail=1
           fi
-          # ── eth1 链路稳定性修复件（关 EEE + PHY 复位脚定电平）在位自证 ──
-          # 实机根因：eth1 的 EEE/LPI 活动（69 次 vs eth0=1）+ 复位脚悬空 → 翻转降速。
-          if [ -x "$PROT/usr/local/sbin/t68m-eee-off" ] && grep -q 'set-eee' "$PROT/usr/local/sbin/t68m-eee-off" 2>/dev/null; then
-            echo "    ✅ t68m-eee-off 脚本在位"
+          # ── eth0/eth1 千兆口链路稳定性修复件在位自证（MAC 侧 RGMII 延迟使能）──
+          # 实机根因：phy-mode="rgmii-id" 下 PHY 侧 2ns 延迟开着，但 vendor GMAC
+          # 驱动对 RGMII_ID 走 set_to_rgmii(-1,-1) 把 MAC 侧延迟使能位清零 →
+          # 采样点临界 → 帧越长越丢（eth1 实测 56B 65% / 1400B 90%，接口零错误）。
+          # 修法：不动 DTB，由 t68m-gmac-delay 开 MAC 侧使能位 + 重置链路。
+          if [ -x "$PROT/usr/local/sbin/t68m-gmac-delay" ]; then
+            echo "    ✅ t68m-gmac-delay 脚本在位"
           else
-            echo "    ❌ t68m-eee-off 脚本缺失"; dfail=1
+            echo "    ❌ t68m-gmac-delay 脚本缺失"; dfail=1
           fi
-          for u in eth-eee-off gmac-phy-hold; do
+          # ★ 必须同时覆盖 eth0 与 eth1（同款 GMAC+RTL8211F，两口同源）
+          gmac_missing=""
+          for need in '0xfdc60000' '0x380' '0x384' '0x388' '0x38c' '0x00030003' '0x7F7F0000' "'eth0'" "'eth1'"; do
+            grep -q -- "$need" "$PROT/usr/local/sbin/t68m-gmac-delay" 2>/dev/null || gmac_missing="$gmac_missing $need"
+          done
+          if [ -z "$gmac_missing" ]; then
+            echo "    ✅ t68m-gmac-delay 同时覆盖 eth0(GMAC0) 与 eth1(GMAC1)：GRF 0xfdc60000 + 使能位"
+          else
+            echo "    ❌ t68m-gmac-delay 缺关键内容:$gmac_missing"; dfail=1
+          fi
+          if [ -f "$PROT/etc/systemd/system/t68m-gmac-delay.service" ] && \
+             [ -L "$PROT/etc/systemd/system/multi-user.target.wants/t68m-gmac-delay.service" ]; then
+            echo "    ✅ t68m-gmac-delay.service 在位且已启用"
+          else
+            echo "    ❌ t68m-gmac-delay.service 缺失或未启用"; dfail=1
+          fi
+          if grep -q 'ExecStart=/usr/bin/python3 /usr/local/sbin/t68m-gmac-delay' \
+               "$PROT/etc/systemd/system/t68m-gmac-delay.service" 2>/dev/null; then
+            echo "    ✅ t68m-gmac-delay.service 用 python3 执行"
+          else
+            echo "    ❌ t68m-gmac-delay.service ExecStart 不符"; dfail=1
+          fi
+          if [ -x "$PROT/usr/bin/python3" ]; then
+            echo "    ✅ python3 在位（服务依赖）"
+          else
+            echo "    ❌ python3 缺失（服务会起不来）"; dfail=1
+          fi
+          # 旧方案（关 EEE）已按官方配置废弃，镜像里不许再有残件
+          if [ -e "$PROT/usr/local/sbin/t68m-eee-off" ] || [ -e "$PROT/etc/systemd/system/eth-eee-off.service" ]; then
+            echo "    ❌ 旧的 EEE 处理残件仍在（应已废弃移除）"; dfail=1
+          else
+            echo "    ✅ 旧 EEE 处理残件已清除（EEE 走官方默认）"
+          fi
+          for u in gmac-phy-hold; do
             if [ -f "$PROT/etc/systemd/system/${u}.service" ] && [ -L "$PROT/etc/systemd/system/multi-user.target.wants/${u}.service" ]; then
               echo "    ✅ ${u}.service 在位且已启用"
             else
@@ -391,7 +427,7 @@ jobs:
             echo "    ❌ gpioset 缺失（gmac-phy-hold 会起不来）"; dfail=1
           fi
           [ "$dfail" = 0 ] || { echo "!! 网络栈对齐官方标准 / .default-network / 链路稳定性自证失败"; exit 1; }
-          echo "    ✅ 网络栈对齐官方标准 + .default-network=eth0 + eth1 链路稳定性自证通过"
+          echo "    ✅ 网络栈对齐官方标准 + .default-network=eth0 + eth0/eth1 链路稳定性自证通过"
 
           sudo umount "$PROT"
 

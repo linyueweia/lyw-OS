@@ -94,36 +94,89 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 	# ── gpiod（gmac-phy-hold 依赖 gpioset；基础镜像已有，apt 兜底且幂等）──
 	chroot_sdcard apt-get install -y -qq gpiod || true
 
-	# ── eth1/eth0 链路稳定性（2026-10 实机根因修复）───────────────
-	# 实机取证（XCK, 三个 boot 全量日志）：eth1(GMAC1+RTL8211F) 自发翻转+
-	# 降速 10M/Half，且 irq_tx_path_in_lpi_mode_n=69（eth0 仅 1）——
-	# EEE/LPI 活动与故障完全重合；另 snps,reset-gpio 脉冲后被驱动释放、
-	# 无 pinctrl 上下拉（gpio3 pin8/pin15 悬空可误触发 PHY 复位）。
-	# 修复：① 开机关 GMAC 双口 EEE；② gpioset 常驻把两个复位脚定为
-	# 物理高电平（非复位态）。实机浸泡：1G/Full 恒定、LPI 冻结、零翻转。
-	# eth2/eth3(PCIe RTL8125) 与此病无关，不处理。
-	install -m 0755 /dev/stdin "${SDCARD}/usr/local/sbin/t68m-eee-off" <<-'EEE_EOF'
-		#!/bin/sh
-		# T68M: 关闭 GMAC 双口 EEE。BSP 6.1 rk_gmac 的 LPI 路径会引发
-		# eth1 翻转/降速（LPI=69 vs eth0=1）；PHY 探测在内核期完成，
-		# 此处无链路也可经 MDIO 写 PHY，失败不阻塞网络启动。
-		for ifc in eth0 eth1; do
-			ethtool --set-eee "$ifc" eee off 2>/dev/null || true
-		done
-		exit 0
-	EEE_EOF
-	cat > "${SDCARD}/etc/systemd/system/eth-eee-off.service" <<-'UNIT_EOF'
+	# ── eth0/eth1 千兆口链路稳定性（2026-10 实机根因修复，已实机验证）──
+	# 两个千兆口同源：GMAC0/eth0、GMAC1/eth1 都是 RK3568 dwmac + RTL8211F。
+	# 根因（vendor 6.1.115 + RTL8211F）：
+	#   ① DTS 用 phy-mode="rgmii-id" → PHY 驱动 rtl8211f_config_init() 会给 PHY
+	#      打开 2ns TX/RX 延迟（page 0xd08/reg 0x11 bit8、page 0xd08/reg 0x15 bit3）；
+	#   ② 但 vendor GMAC 驱动 rk_gmac_powerup() 对 RGMII_ID 调
+	#      set_to_rgmii(bsp, -1, -1)，经 DELAY_ENABLE 宏把 **MAC 侧 TX/RX 时钟
+	#      延迟使能位清零**，且完全无视 DT 里的 tx_delay/rx_delay。
+	#   → MAC 侧内部延迟路径被关掉 ⇒ RGMII 采样点临界 ⇒ 帧越长越易错。
+	#      实测 eth1：56B 丢 65%、1400B 丢 90%，而接口侧错误计数为 0。
+	# 修法：**DTB 一个字都不改**（保住 PHY 侧 2ns 延迟），由本服务把两口 MAC 侧
+	#   使能位打开，再重置链路使其生效，并让 eth0（WAN）重新 DHCP。
+	#   实机 A/B 两次重复：使能 OFF↔ON ⇒ 丢包 50~88% ↔ 0%；TCP 重传 91→0。
+	# ⚠ 反面教训：把 phy-mode 改成 "rgmii" 是**错的** —— 那会让 PHY 驱动
+	#   (case PHY_INTERFACE_MODE_RGMII) 把 PHY 的 2ns 延迟**关掉**，两个千兆口
+	#   一起死（链路 up 但零数据，运行态救不回、必须重启）。已实机证伪，勿再试。
+	chroot_sdcard apt-get install -y -qq python3 || true
+	install -m 0755 /dev/stdin "${SDCARD}/usr/local/sbin/t68m-gmac-delay" <<-'GMAC_EOF'
+		#!/usr/bin/env python3
+		# T68M: 打开 GMAC0/GMAC1 的 MAC 侧 RGMII 时钟延迟使能位（延迟值=0）。
+		# GRF 基址 0xfdc60000；CON1: GRF_BIT(0)|GRF_BIT(1) = TX/RX 使能；CON0: 延迟值。
+		# 依据 vendor dwmac-rk.c 的 DELAY_ENABLE/DELAY_VALUE 宏；实机 A/B 验证。
+		import mmap, os, struct, subprocess, time
+		BASE = 0xfdc60000
+		PORTS = ((0x380, 0x384, "eth0"), (0x388, 0x38c, "eth1"))
+		def wr(off, val):
+		    f = os.open('/dev/mem', os.O_RDWR | os.O_SYNC)
+		    m = mmap.mmap(f, 4096, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE, offset=BASE)
+		    m[off:off+4] = struct.pack('<I', val)
+		    del m
+		    os.close(f)
+		def rd(off):
+		    f = os.open('/dev/mem', os.O_RDONLY | os.O_SYNC)
+		    m = mmap.mmap(f, 4096, mmap.MAP_SHARED, mmap.PROT_READ, offset=BASE)
+		    v = struct.unpack('<I', m[off:off+4])[0]
+		    m.close()
+		    os.close(f)
+		    return v
+		for nic in ('eth0', 'eth1'):
+		    for _ in range(30):
+		        if os.path.exists('/sys/class/net/' + nic):
+		            break
+		        time.sleep(1)
+		for c0, c1, nic in PORTS:
+		    wr(c1, 0x00030003)
+		    wr(c0, 0x7F7F0000)
+		    print("t68m-gmac-delay: %s CON1=%#010x CON0=%#010x" % (nic, rd(c1), rd(c0)), flush=True)
+		for nic in ('eth0', 'eth1'):
+		    subprocess.run(['ip', 'link', 'set', nic, 'down'], capture_output=True)
+		    time.sleep(2)
+		    subprocess.run(['ip', 'link', 'set', nic, 'up'], capture_output=True)
+		    for _ in range(15):
+		        time.sleep(1)
+		        try:
+		            if open('/sys/class/net/' + nic + '/carrier').read().strip() == '1':
+		                break
+		        except Exception:
+		            pass
+		subprocess.run(['pkill', '-f', 'dhclient.*eth0'], capture_output=True)
+		time.sleep(1)
+		try:
+		    subprocess.run(['dhclient', '-1', 'eth0'], capture_output=True, timeout=60)
+		except Exception:
+		    pass
+		print("t68m-gmac-delay: done", flush=True)
+	GMAC_EOF
+	# 构建期自证：heredoc 里的 python 若被缩进/制表符搞坏，这里必须失败
+	chroot_sdcard python3 -m py_compile /usr/local/sbin/t68m-gmac-delay || \
+		exit_with_error "t68m-gmac-delay: embedded python failed py_compile"
+	cat > "${SDCARD}/etc/systemd/system/t68m-gmac-delay.service" <<-'UNIT_EOF'
 		[Unit]
-		Description=Disable EEE on GMAC ports (T68M eth1 link-stability fix)
-		After=sysinit.target
-		Before=networking.service
+		Description=T68M GMAC RGMII MAC-side delay enable (eth0/eth1 link stability)
+		After=network.target multi-user.target
+		Wants=network.target
 		[Service]
 		Type=oneshot
 		RemainAfterExit=yes
-		ExecStart=/usr/local/sbin/t68m-eee-off
+		ExecStart=/usr/bin/python3 /usr/local/sbin/t68m-gmac-delay
+		TimeoutStartSec=180
 		[Install]
 		WantedBy=multi-user.target
 	UNIT_EOF
+
 	cat > "${SDCARD}/etc/systemd/system/gmac-phy-hold.service" <<-'UNIT_EOF'
 		[Unit]
 		Description=Hold GMAC PHY reset GPIOs inactive (T68M eth1 link-stability fix)
@@ -143,7 +196,7 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 	# 不用 chroot_sdcard systemctl enable：实测（构建 37423507035）在构建容器里
 	# 它不会在镜像内生成 multi-user.target.wants 链接——自证因此失败。直接建链接可靠。
 	mkdir -p "${SDCARD}/etc/systemd/system/multi-user.target.wants"
-	for s in roceos.service roceos-ai.service roceos-vision.service eth-eee-off.service gmac-phy-hold.service; do
+	for s in roceos.service roceos-ai.service roceos-vision.service t68m-gmac-delay.service gmac-phy-hold.service; do
 		ln -sf "/etc/systemd/system/${s}" "${SDCARD}/etc/systemd/system/multi-user.target.wants/${s}"
 	done
 
@@ -216,6 +269,15 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 		[[ -L "${SDCARD}/etc/systemd/system/multi-user.target.wants/${f}" ]] || \
 			{ display_alert "missing wants link ${f}" "$EXTENSION" "err"; fail=1; }
 	done
+	# eth0/eth1 千兆口链路稳定性修复件（MAC 侧 RGMII 延迟使能，两口同源必同修）
+	[[ -x "${SDCARD}/usr/local/sbin/t68m-gmac-delay" ]] || \
+		{ display_alert "t68m-gmac-delay script missing" "$EXTENSION" "err"; fail=1; }
+	for f in t68m-gmac-delay.service gmac-phy-hold.service; do
+		[[ -L "${SDCARD}/etc/systemd/system/multi-user.target.wants/${f}" ]] || \
+			{ display_alert "missing wants link ${f}" "$EXTENSION" "err"; fail=1; }
+	done
+	[[ -e "${SDCARD}/etc/systemd/system/eth-eee-off.service" ]] && \
+		{ display_alert "obsolete eth-eee-off.service still present" "$EXTENSION" "err"; fail=1; }
 	[[ -L "${SDCARD}/etc/nginx/sites-enabled/roceos.conf" ]] || { display_alert "nginx site not enabled" "$EXTENSION" "err"; fail=1; }
 	# ── 更新防护与 ttyFIQ0 自证 ──
 	[[ -f "${SDCARD}/etc/apt/preferences.d/10-inextos-firmware-conflict" ]] || { display_alert "apt pin file missing" "$EXTENSION" "err"; fail=1; }
