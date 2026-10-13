@@ -403,11 +403,32 @@ jobs:
           else
             echo "    ❌ python3 缺失（服务会起不来）"; dfail=1
           fi
-          # 旧方案（关 EEE）已按官方配置废弃，镜像里不许再有残件
-          if [ -e "$PROT/usr/local/sbin/t68m-eee-off" ] || [ -e "$PROT/etc/systemd/system/eth-eee-off.service" ]; then
-            echo "    ❌ 旧的 EEE 处理残件仍在（应已废弃移除）"; dfail=1
+          # EEE 必须关闭（2026-10-13 实机翻案：曾按官方默认不处理并断言残件必须清除，
+          # 实机 phy_eee_wakeup_error_n=8126 + 高峰期密集 Link Down 推翻 → 修复件必须在位）
+          if [ -x "$PROT/usr/local/sbin/t68m-eee-off" ] && \
+             [ -f "$PROT/etc/systemd/system/eth-eee-off.service" ] && \
+             [ -L "$PROT/etc/systemd/system/multi-user.target.wants/eth-eee-off.service" ]; then
+            echo "    ✅ eth-eee-off 在位且已启用（EEE 关闭，LPI 唤醒失败修复）"
+            if grep -q -- '--set-eee' "$PROT/usr/local/sbin/t68m-eee-off" 2>/dev/null && \
+               grep -q 'eee off' "$PROT/usr/local/sbin/t68m-eee-off" 2>/dev/null && \
+               grep -q 'power/control' "$PROT/usr/local/sbin/t68m-eee-off" 2>/dev/null; then
+              echo "    ✅ t68m-eee-off 内容正确（--set-eee … eee off + power/control=on）"
+            else
+              echo "    ❌ t68m-eee-off 内容不符（缺 --set-eee/eee off/power/control）"; dfail=1
+            fi
+            if grep -q 'ExecStart=/bin/sh /usr/local/sbin/t68m-eee-off' \
+                 "$PROT/etc/systemd/system/eth-eee-off.service" 2>/dev/null; then
+              echo "    ✅ eth-eee-off.service ExecStart 正确"
+            else
+              echo "    ❌ eth-eee-off.service ExecStart 不符"; dfail=1
+            fi
           else
-            echo "    ✅ 旧 EEE 处理残件已清除（EEE 走官方默认）"
+            echo "    ❌ eth-eee-off/t68m-eee-off 缺失或未启用（EEE 关闭修复丢失）"; dfail=1
+          fi
+          if [ -x "$PROT/usr/sbin/ethtool" ] || [ -x "$PROT/usr/bin/ethtool" ]; then
+            echo "    ✅ ethtool 在位（eth-eee-off 依赖）"
+          else
+            echo "    ❌ ethtool 缺失（eth-eee-off 会起不来）"; dfail=1
           fi
           for u in gmac-phy-hold; do
             if [ -f "$PROT/etc/systemd/system/${u}.service" ] && [ -L "$PROT/etc/systemd/system/multi-user.target.wants/${u}.service" ]; then

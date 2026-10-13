@@ -192,11 +192,73 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 		WantedBy=multi-user.target
 	UNIT_EOF
 
+	# ── EEE 关闭（2026-10-13 实机翻案，独立于 RGMII 时序的第二病）──
+	# 实机证据（主路由 T68M 线 iNextOSA，17h 运行）：
+	#   · eth1 高峰时段（18:28–21:45）密集 Link Down 34 次/3h，深夜停网时几乎不掉
+	#   · 对端（K1 飞牛）phy_eee_wakeup_error_n=8126，LPI 进出 7800 万次
+	#   · 两端 CRC/误码全 0 → 排除物理层；温度 37°C → 排除过热
+	#   · 两个修复服务（t68m-gmac-delay / gmac-phy-hold）全程 active，非其失效
+	#   · ethtool --set-eee eee off 后掉线归零（10:00 后零事件）
+	# 病理：EEE/LPI 省电态唤醒时序在 RK3568 dwmac + RTL8211F 上翻车 → 整口重协商。
+	#   与"丢包"（RGMII 采样时序）是两个独立的病：时序修好只治丢包，治不了掉线。
+	# 历史：本仓库曾有同名服务，当时因"丢包病根是时序"被当废案删除、CI 断言其必须
+	#   不存在；2026-10-13 实机证据推翻该决定，服务重装、CI 断言同步反转。
+	chroot_sdcard apt-get install -y -qq ethtool || true
+	chroot_sdcard command -v ethtool >/dev/null 2>&1 || \
+		exit_with_error "ethtool missing in image (eth-eee-off needs it)"
+	install -m 0755 /dev/stdin "${SDCARD}/usr/local/sbin/t68m-eee-off" <<-'EEE_EOF'
+		#!/bin/sh
+		# 对镜像内每个真实网卡关闭 EEE（ethtool --set-eee eee off）并把运行时
+		# 电源管理钉死为 on。重试直到所有支持 EEE 的口都关成功（PHY 可能尚未
+		# probe 完，尤其 PCIe RTL8125）；不支持 EEE 的口（wifi/虚拟口）直接跳过。
+		attempt=0
+		while [ "$attempt" -lt 15 ]; do
+			attempt=$((attempt + 1))
+			pending=0
+			for d in /sys/class/net/*; do
+				[ -e "$d" ] || continue
+				nic=${d##*/}
+				case "$nic" in
+					lo|docker*|veth*|br-*|wg*|tailscale*|tun*) continue ;;
+				esac
+				if ! ethtool --set-eee "$nic" eee off 2>/dev/null; then
+					# set 失败：若该口根本不支持 EEE（--show-eee 也失败）则不算欠账
+					if ethtool --show-eee "$nic" >/dev/null 2>&1; then
+						pending=1
+					fi
+				fi
+				pm="$d/device/power/control"
+				if [ -w "$pm" ]; then
+					echo on > "$pm" 2>/dev/null || true
+				fi
+			done
+			[ "$pending" -eq 0 ] && break
+			sleep 2
+		done
+		echo "t68m-eee-off: done (attempt=$attempt)"
+		exit 0
+	EEE_EOF
+	# 构建期自证：heredoc 被缩进搞坏必须当场失败
+	chroot_sdcard sh -n /usr/local/sbin/t68m-eee-off || \
+		exit_with_error "t68m-eee-off: embedded sh failed syntax check"
+	cat > "${SDCARD}/etc/systemd/system/eth-eee-off.service" <<-'UNIT_EOF'
+		[Unit]
+		Description=Disable NIC EEE/LPI (RK3568 dwmac wakeup-failure link-drop fix)
+		After=network.target
+		[Service]
+		Type=oneshot
+		RemainAfterExit=yes
+		ExecStart=/bin/sh /usr/local/sbin/t68m-eee-off
+		TimeoutStartSec=60
+		[Install]
+		WantedBy=multi-user.target
+	UNIT_EOF
+
 	# ── 启用服务 ──────────────────────────────────────────────────────
 	# 不用 chroot_sdcard systemctl enable：实测（构建 37423507035）在构建容器里
 	# 它不会在镜像内生成 multi-user.target.wants 链接——自证因此失败。直接建链接可靠。
 	mkdir -p "${SDCARD}/etc/systemd/system/multi-user.target.wants"
-	for s in roceos.service roceos-ai.service roceos-vision.service t68m-gmac-delay.service gmac-phy-hold.service; do
+	for s in roceos.service roceos-ai.service roceos-vision.service t68m-gmac-delay.service gmac-phy-hold.service eth-eee-off.service; do
 		ln -sf "/etc/systemd/system/${s}" "${SDCARD}/etc/systemd/system/multi-user.target.wants/${s}"
 	done
 
@@ -276,8 +338,16 @@ function post_post_debootstrap_tweaks__t68m_roceos() {
 		[[ -L "${SDCARD}/etc/systemd/system/multi-user.target.wants/${f}" ]] || \
 			{ display_alert "missing wants link ${f}" "$EXTENSION" "err"; fail=1; }
 	done
+	# EEE 关闭修复件（2026-10-13 实机翻案重装：phy_eee_wakeup_error_n=8126 →
+	# 高峰期密集 Link Down。曾被当废案删除并断言"必须不存在"，断言已反转）
+	[[ -x "${SDCARD}/usr/local/sbin/t68m-eee-off" ]] || \
+		{ display_alert "t68m-eee-off script missing" "$EXTENSION" "err"; fail=1; }
+	grep -q -- '--set-eee' "${SDCARD}/usr/local/sbin/t68m-eee-off" 2>/dev/null && \
+	grep -q 'eee off' "${SDCARD}/usr/local/sbin/t68m-eee-off" 2>/dev/null || \
+		{ display_alert "t68m-eee-off lacks 'ethtool --set-eee ... eee off'" "$EXTENSION" "err"; fail=1; }
 	[[ -e "${SDCARD}/etc/systemd/system/eth-eee-off.service" ]] && \
-		{ display_alert "obsolete eth-eee-off.service still present" "$EXTENSION" "err"; fail=1; }
+	[[ -L "${SDCARD}/etc/systemd/system/multi-user.target.wants/eth-eee-off.service" ]] || \
+		{ display_alert "eth-eee-off.service missing or not enabled" "$EXTENSION" "err"; fail=1; }
 	[[ -L "${SDCARD}/etc/nginx/sites-enabled/roceos.conf" ]] || { display_alert "nginx site not enabled" "$EXTENSION" "err"; fail=1; }
 	# ── 更新防护与 ttyFIQ0 自证 ──
 	[[ -f "${SDCARD}/etc/apt/preferences.d/10-inextos-firmware-conflict" ]] || { display_alert "apt pin file missing" "$EXTENSION" "err"; fail=1; }
