@@ -352,7 +352,7 @@ sync
 ```
 config/boards/lyt-t68m.csc                     板级配置（BOOT_FDT_FILE / 网口重命名 / 默认网口）
 patch/kernel/rk35xx-vendor-6.1/dt/*.dts        板级设备树（框架会自动拷入内核并改 Makefile）
-kernel-files/rk3568-lyt-t68m.dtb              板级 DTB（用于 boot 分区）
+（kernel-files/ 里的旧 DTB 已删除：它是 rgmii-id 且无 tx/rx_delay 的历史件，CI 不再用它兜底）
 kernel-files/{idbloader.img,u-boot.itb}      仅作参考备份，**不再注入镜像**
 extensions/t68m-roceos.sh                     框架扩展：构建阶段补齐 roceos 网页后台 + AIC8800 WiFi 固件
                                               （载荷走 userpatches/overlay，服务用 chroot_sdcard systemctl enable 启用）
