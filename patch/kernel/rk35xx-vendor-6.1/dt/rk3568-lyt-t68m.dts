@@ -236,7 +236,15 @@
 	assigned-clock-parents = <&cru SCLK_GMAC0_RGMII_SPEED>;
 	assigned-clock-rates = <0>, <125000000>;
 	clock_in_out = "output";
-	phy-mode = "rgmii-id";
+	/* 官方（同内核树 easepi-r1 / 本板厂商 6.12 DTB）的写法：phy-mode="rgmii" +
+	   tx_delay/rx_delay，RGMII 延迟全部由 MAC 侧产生，PHY 侧 2ns 由驱动关掉。
+	   为什么不用 "rgmii-id"：vendor dwmac-rk 的 PHY_INTERFACE_MODE_RGMII_ID 分支是
+	   set_to_rgmii(bsp, -1, -1)，DELAY_ENABLE 宏对 -1 取 *_DLY_DISABLE ⇒ 只留 PHY 侧
+	   2ns、MAC 侧全关，实测采样点临界（56B 丢 65% / 1400B 丢 90%，接口错误计数为 0）。
+	   本板取值取自厂商 T68M 6.12 出厂 DTB（gmii0: 0x3c/0x2f），不是照抄别的板子。 */
+	phy-mode = "rgmii";
+	tx_delay = <0x3c>;
+	rx_delay = <0x2f>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&gmac0_miim
 		     &gmac0_tx_bus2
@@ -256,7 +264,11 @@
 	assigned-clock-parents = <&cru SCLK_GMAC1_RGMII_SPEED>;
 	assigned-clock-rates = <0>, <125000000>;
 	clock_in_out = "output";
-	phy-mode = "rgmii-id";
+	/* 同 gmac0：官方 rgmii + MAC 侧延迟写法；本板 gmac1 取值取自厂商 6.12 出厂 DTB
+	   （0x42/0x28）。两个千兆口同源同修，只改一个 = 另一个继续丢包。 */
+	phy-mode = "rgmii";
+	tx_delay = <0x42>;
+	rx_delay = <0x28>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&gmac1m1_miim
 		     &gmac1m1_tx_bus2
@@ -555,6 +567,11 @@
 };
 
 &mdio0 {
+	/* EEE（IEEE 802.3az / LPI）按官方默认**保持打开**，本仓库不在这里做 eee-broken-*。
+	   实机复核（2026-10-17，主路由 iNextOS-XCK）：两个 RTL8211F 口的 EEE 通告寄存器本来就是
+	   0（`Advertised EEE link modes: Not reported`）、对端 K1 的 LPI 计数全 0，链路无 LPI 活动；
+	   此前的"整口重协商掉线"经日志比对是对端设备重启（每次掉线后 1–5 s 对端就重新 DHCP）。
+	   ⇒ 不再加 eee-broken-1000t，避免与官方（easepi-r1.csc / 同内核树）行为不一致。 */
 	rgmii_phy0: ethernet-phy@0 {
 		compatible = "ethernet-phy-ieee802.3-c22";
 		reg = <0>;
@@ -563,6 +580,7 @@
 };
 
 &mdio1 {
+	/* 同上：eth1(GMAC1) 亦为 RTL8211F，EEE 保持官方默认开启 */
 	rgmii_phy1: ethernet-phy@0 {
 		compatible = "ethernet-phy-ieee802.3-c22";
 		reg = <0>;

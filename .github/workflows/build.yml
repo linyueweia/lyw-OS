@@ -288,6 +288,31 @@ jobs:
             fi
           done
 
+          # (2d) 千兆口 RGMII 时序必须写在 DTS 里（官方写法），且必须两口同改：
+          #      phy-mode="rgmii" + tx_delay/rx_delay（vendor dwmac-rk 的 RGMII_ID 分支
+          #      调 set_to_rgmii(bsp,-1,-1)，会把 MAC 侧延迟位清零并忽略 DT 的延迟值）。
+          #      取值来自本板厂商 6.12 出厂 DTB：gmac0 0x3c/0x2f、gmac1 0x42/0x28。
+          echo "--- (2d) 校验千兆口 phy-mode/tx_delay/rx_delay（官方 rgmii 写法）---"
+          dfail=0
+          for spec in "/ethernet@fe2a0000 rgmii 3c 2f" "/ethernet@fe010000 rgmii 42 28"; do
+            set -- $spec
+            pm=$(sudo fdtget -t s "$DT" "$1" phy-mode 2>/dev/null || echo MISSING)
+            tx=$(sudo fdtget -t x "$DT" "$1" tx_delay 2>/dev/null || echo MISSING)
+            rx=$(sudo fdtget -t x "$DT" "$1" rx_delay 2>/dev/null || echo MISSING)
+            printf "    %-22s phy-mode=%-10s tx_delay=%-4s rx_delay=%-4s (want %s/%s/%s)\n" \
+                   "$1" "$pm" "$tx" "$rx" "$2" "$3" "$4"
+            [ "$pm" = "$2" ] && [ "$tx" = "$3" ] && [ "$rx" = "$4" ] || dfail=1
+          done
+          # EEE 按官方默认保持打开：DTB 里不得出现 eee-broken-*（反向断言）
+          for p in /ethernet@fe2a0000/mdio/ethernet-phy@0 /ethernet@fe010000/mdio/ethernet-phy@0; do
+            if sudo fdtget -p "$DT" "$p" 2>/dev/null | grep -q "eee-broken"; then
+              echo "    ❌ $p 出现 eee-broken-*（与官方默认不一致）"; dfail=1
+            else
+              echo "    ✅ $p 无 eee-broken-*（EEE 保持官方默认）"
+            fi
+          done
+          [ "$dfail" = 0 ] || { echo "!! 千兆口 RGMII 时序 / EEE 写法与官方不一致"; exit 1; }
+
           # 更新防护：apt 禁止清单 + 空壳固件包 + ttyFIQ0 getty 屏蔽
           # （roceos 的更新流程会装发行版固件包，与 armbian-firmware 冲突并把它连同
           #   WiFi 固件一起删掉，实测过；这两项让该流程无法再造成破坏）
@@ -366,87 +391,33 @@ jobs:
           else
             echo "    ❌ /etc/eth_order 内容不符"; dfail=1
           fi
-          # ── eth0/eth1 千兆口链路稳定性修复件在位自证（MAC 侧 RGMII 延迟使能）──
-          # 实机根因：phy-mode="rgmii-id" 下 PHY 侧 2ns 延迟开着，但 vendor GMAC
-          # 驱动对 RGMII_ID 走 set_to_rgmii(-1,-1) 把 MAC 侧延迟使能位清零 →
-          # 采样点临界 → 帧越长越丢（eth1 实测 56B 65% / 1400B 90%，接口零错误）。
-          # 修法：不动 DTB，由 t68m-gmac-delay 开 MAC 侧使能位 + 重置链路。
-          if [ -x "$PROT/usr/local/sbin/t68m-gmac-delay" ]; then
-            echo "    ✅ t68m-gmac-delay 脚本在位"
-          else
-            echo "    ❌ t68m-gmac-delay 脚本缺失"; dfail=1
-          fi
-          # ★ 必须同时覆盖 eth0 与 eth1（同款 GMAC+RTL8211F，两口同源）
-          gmac_missing=""
-          for need in '0xfdc60000' '0x380' '0x384' '0x388' '0x38c' '0x00030003' '0x7F7F0000' "'eth0'" "'eth1'"; do
-            grep -q -- "$need" "$PROT/usr/local/sbin/t68m-gmac-delay" 2>/dev/null || gmac_missing="$gmac_missing $need"
-          done
-          if [ -z "$gmac_missing" ]; then
-            echo "    ✅ t68m-gmac-delay 同时覆盖 eth0(GMAC0) 与 eth1(GMAC1)：GRF 0xfdc60000 + 使能位"
-          else
-            echo "    ❌ t68m-gmac-delay 缺关键内容:$gmac_missing"; dfail=1
-          fi
-          if [ -f "$PROT/etc/systemd/system/t68m-gmac-delay.service" ] && \
-             [ -L "$PROT/etc/systemd/system/multi-user.target.wants/t68m-gmac-delay.service" ]; then
-            echo "    ✅ t68m-gmac-delay.service 在位且已启用"
-          else
-            echo "    ❌ t68m-gmac-delay.service 缺失或未启用"; dfail=1
-          fi
-          if grep -q 'ExecStart=/usr/bin/python3 /usr/local/sbin/t68m-gmac-delay' \
-               "$PROT/etc/systemd/system/t68m-gmac-delay.service" 2>/dev/null; then
-            echo "    ✅ t68m-gmac-delay.service 用 python3 执行"
-          else
-            echo "    ❌ t68m-gmac-delay.service ExecStart 不符"; dfail=1
-          fi
-          if [ -x "$PROT/usr/bin/python3" ]; then
-            echo "    ✅ python3 在位（服务依赖）"
-          else
-            echo "    ❌ python3 缺失（服务会起不来）"; dfail=1
-          fi
-          # EEE 必须关闭（2026-10-13 实机翻案：曾按官方默认不处理并断言残件必须清除，
-          # 实机 phy_eee_wakeup_error_n=8126 + 高峰期密集 Link Down 推翻 → 修复件必须在位）
-          if [ -x "$PROT/usr/local/sbin/t68m-eee-off" ] && \
-             [ -f "$PROT/etc/systemd/system/eth-eee-off.service" ] && \
-             [ -L "$PROT/etc/systemd/system/multi-user.target.wants/eth-eee-off.service" ]; then
-            echo "    ✅ eth-eee-off 在位且已启用（EEE 关闭，LPI 唤醒失败修复）"
-            if grep -q -- '--set-eee' "$PROT/usr/local/sbin/t68m-eee-off" 2>/dev/null && \
-               grep -q 'eee off' "$PROT/usr/local/sbin/t68m-eee-off" 2>/dev/null && \
-               grep -q 'power/control' "$PROT/usr/local/sbin/t68m-eee-off" 2>/dev/null; then
-              echo "    ✅ t68m-eee-off 内容正确（--set-eee … eee off + power/control=on）"
+          # 网卡配置全部在 DTS 里（见 (2d)，官方写法）⇒ 镜像中不得再有任何网卡运行时补丁件：
+          # GRF 直写(旧 gmac-delay)、EEE 关闭(旧 eth-eee-off / r8125-eee.conf)、
+          # gpioset 常驻(旧 gmac-phy-hold) —— 官方板级里都没有这些。
+          for f in usr/local/sbin/t68m-gmac-delay usr/local/sbin/t68m-eee-off \
+                   etc/systemd/system/t68m-gmac-delay.service \
+                   etc/systemd/system/eth-eee-off.service \
+                   etc/systemd/system/gmac-phy-hold.service \
+                   etc/modprobe.d/r8125-eee.conf; do
+            if [ -e "$PROT/${f}" ]; then
+              echo "    ❌ 仍有网卡运行时补丁件 $f（应只由 DTS 承担）"; dfail=1
             else
-              echo "    ❌ t68m-eee-off 内容不符（缺 --set-eee/eee off/power/control）"; dfail=1
-            fi
-            if grep -q 'ExecStart=/bin/sh /usr/local/sbin/t68m-eee-off' \
-                 "$PROT/etc/systemd/system/eth-eee-off.service" 2>/dev/null; then
-              echo "    ✅ eth-eee-off.service ExecStart 正确"
-            else
-              echo "    ❌ eth-eee-off.service ExecStart 不符"; dfail=1
-            fi
-          else
-            echo "    ❌ eth-eee-off/t68m-eee-off 缺失或未启用（EEE 关闭修复丢失）"; dfail=1
-          fi
-          if [ -x "$PROT/usr/sbin/ethtool" ] || [ -x "$PROT/usr/bin/ethtool" ]; then
-            echo "    ✅ ethtool 在位（eth-eee-off 依赖）"
-          else
-            echo "    ❌ ethtool 缺失（eth-eee-off 会起不来）"; dfail=1
-          fi
-          for u in gmac-phy-hold; do
-            if [ -f "$PROT/etc/systemd/system/${u}.service" ] && [ -L "$PROT/etc/systemd/system/multi-user.target.wants/${u}.service" ]; then
-              echo "    ✅ ${u}.service 在位且已启用"
-            else
-              echo "    ❌ ${u}.service 缺失或未启用"; dfail=1
+              echo "    ✅ 无 $f"
             fi
           done
-          if grep -q 'gpioset -c gpiochip3' "$PROT/etc/systemd/system/gmac-phy-hold.service" 2>/dev/null; then
-            echo "    ✅ gmac-phy-hold 持有 gpio3 pin8+pin15"
+          # 官方 R1 镜像自带 /usr/sbin/ethtool（本仓不额外装，但必须在位以便现场取证）
+          if [ -x "$PROT/usr/sbin/ethtool" ]; then
+            echo "    ✅ ethtool 在位（与官方基线一致）"
           else
-            echo "    ❌ gmac-phy-hold 内容不符"; dfail=1
+            echo "    ❌ ethtool 缺失（与官方基线不一致）"; dfail=1
           fi
-          if [ -x "$PROT/usr/bin/gpioset" ]; then
-            echo "    ✅ gpioset (gpiod) 在位"
-          else
-            echo "    ❌ gpioset 缺失（gmac-phy-hold 会起不来）"; dfail=1
-          fi
+          for u in eth-eee-off.service t68m-gmac-delay.service gmac-phy-hold.service; do
+            if [ -L "$PROT/etc/systemd/system/multi-user.target.wants/$u" ]; then
+              echo "    ❌ wants 里仍有 $u 的启用链接"; dfail=1
+            else
+              echo "    ✅ wants 里无 $u"
+            fi
+          done
           [ "$dfail" = 0 ] || { echo "!! 网络栈对齐官方标准 / .default-network / 链路稳定性自证失败"; exit 1; }
           echo "    ✅ 网络栈对齐官方标准 + .default-network=eth0 + eth0/eth1 链路稳定性自证通过"
 
