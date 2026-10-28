@@ -1,0 +1,90 @@
+name: Verify T68M DTB (fast gate, ~4 min)
+
+# 目的：把「板级 DTS 能不能编过 / 编出来的 DTB 是否 52 条断言全绿」从 90 分钟的整机
+# 构建里前移到一个几分钟的独立流水线。整机镜像构建（build.yml）最后一步跑的是同一份
+# 判据工具（tools/board-parity-check.py），所以这里绿 ≠ 镜像必然绿，但这里红则一定别开整机。
+#
+# 判据为什么不用 fdtget 字符串比较（run #73 的 4 条红全是判据写法，真 DTB 值全对）：
+#   ① fdtget -t x 输出不带 0x 前缀、gpios 第一格是随树变化的 phandle（本树 0x8b/0x3f）；
+#   ② fdtget -t s 读 phandle 属性必然失败，`|| echo MISSING` 把"存在"读成"缺失"。
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'patch/**'
+      - 'tools/**'
+      - '.github/workflows/dtb-verify.yml'
+
+concurrency:
+  group: t68m-dtb-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dtb:
+    name: 编译板级 DTS 并跑全部 DTB 断言
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Checkout board adaptation
+        uses: actions/checkout@v4
+        with:
+          path: t68m
+
+      - name: Install dtc / cpp
+        run: |
+          set -e
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq device-tree-compiler
+          dtc --version
+
+      - name: 判据自测（负例不响 = 判据没在干活）
+        run: |
+          set -e
+          echo "--- board-parity-check 自测（真实 DTB 夹具 + 字节级负例）---"
+          python3 t68m/tools/board-parity-check.py --selftest
+          echo "--- dts-lint 自测 + 板级 DTS 语法门 ---"
+          python3 t68m/tools/dts-lint.py --selftest
+          python3 t68m/tools/dts-lint.py t68m/patch/kernel/rk35xx-vendor-6.1/dt/*.dts
+
+      - name: 稀疏取内核树的 dts / dt-bindings（只取编译所需）
+        run: |
+          set -e
+          git clone --depth 1 --filter=blob:none --sparse \
+            -b rk-6.1-rkr5.1 https://github.com/armbian/linux-rockchip.git kern
+          cd kern
+          git sparse-checkout set \
+            arch/arm64/boot/dts/rockchip \
+            include/dt-bindings \
+            scripts/dtc/include-prefixes
+          du -sh arch/arm64/boot/dts/rockchip include/dt-bindings scripts/dtc/include-prefixes
+          ls arch/arm64/boot/dts/rockchip/rk3568.dtsi arch/arm64/boot/dts/rockchip/rk356x.dtsi
+
+      - name: 用内核同款 cpp + dtc 编译板级 DTB
+        run: |
+          set -e
+          cp t68m/patch/kernel/rk35xx-vendor-6.1/dt/rk3568-lyt-t68m.dts \
+             kern/arch/arm64/boot/dts/rockchip/
+          cd kern
+          cpp -nostdinc -undef -D__DTS__ -x assembler-with-cpp \
+              -I scripts/dtc/include-prefixes \
+              -I arch/arm64/boot/dts/rockchip \
+              arch/arm64/boot/dts/rockchip/rk3568-lyt-t68m.dts -o /tmp/board.prev.dts
+          dtc -I dts -O dtb -o /tmp/rk3568-lyt-t68m.dtb /tmp/board.prev.dts
+          ls -l /tmp/rk3568-lyt-t68m.dtb
+          md5sum /tmp/rk3568-lyt-t68m.dtb
+          echo "（与 run #73 产物 147678fe… 不同是预期的：本次删掉了 hdmi-con / port@1）"
+
+      - name: 52 条 DTB 断言（对真编产物）
+        run: |
+          set -e
+          python3 t68m/tools/board-parity-check.py /tmp/rk3568-lyt-t68m.dtb
+
+      - name: 上传 DTB（本机可复核，也是整机构建的对照件）
+        uses: actions/upload-artifact@v4
+        with:
+          name: t68m-dtb
+          path: |
+            /tmp/rk3568-lyt-t68m.dtb
+            /tmp/board.prev.dts
+          if-no-files-found: error

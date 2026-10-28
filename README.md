@@ -458,14 +458,25 @@ extensions/t68m-roceos.sh                     框架扩展：构建阶段补齐 
 
 另外 LED 的 `default-state = "on"`、`hdmi rockchip,phy-table` 是本树特有：厂商系统靠用户态脚本点亮指示灯（iNextOS 没有该脚本），PHY 校准表取自同树官方 EVB `rk3568-evb.dtsi`。
 
-CI 的 **(2d-2) 板级对齐自证** 已单点化到 `tools/board-parity-check.py`（纯 python 读 FDT，不依赖 dtc/fdtget）：
-17 条断言逐条锚在**镜像 DTB** 上，phandle 一律解析成节点名再比、数值按 cell 比（不写死字面量），
-其中 5 条是反断言（两口 PHY 不得有 `leds` 子节点、`/vcc3v3-pcie-regulator` 不得带 `gpios`、
-`/hdmi-con` 与 `&hdmi port@1` 不得存在）。工具自带 `--selftest`（9 例正/负例，含"判据抛异常必须算失败"），
-已挂进构建早期门禁；本机可用上一发产物 DTB 秒级复跑：
-`python3 tools/board-parity-check.py <dtb>`。
+DTB 相关断言（`(2b)(2c)(2d)(2d-2)(2e)` 五组）已全部单点化到 `tools/board-parity-check.py`
+（纯 python 读 FDT，不依赖 `fdtget`/`dtc`）：**52 条**断言，phandle 一律解析成节点名再比、
+数值按 cell 比（不写死字面量），其中 6 条是反断言（两口 PHY 不得有 `leds` 子节点、
+`/vcc3v3-pcie-regulator` 不得带 `gpios`、`/hdmi-con` 与 `&hdmi port@1` 不得存在、
+两口 PHY 不得出现 `eee-broken-100tx/10gt` 等）。
 
-> run #73 这块红 4 条，全部是**判据写法**问题、不是 DTB：`fdtget -t x` 输出不带 `0x` 前缀、
+两道门用**同一份**判据，不允许第二份字面量：
+
+| 门 | 位置 | 跑什么 | 耗时 |
+|---|---|---|---|
+| DTB 校验（前置） | `.github/workflows/dtb-verify.yml`（push `patch/**`/`tools/**` + 手动） | 稀疏 clone 内核树 → 内核同款 `cpp+dtc` 编板级 DTB → 52 条断言 | ~4 分钟 |
+| 镜像自证（末尾） | `build.yml` step「Post-process image」 | 同一工具对**镜像里的 DTB** 复核 | 构建内 |
+
+**规矩：`dtb-verify` 全绿之前不开整机镜像构建**（一次 90~120 分钟，白跑代价太高）。
+工具自带 `--selftest`，夹具是 run #73 的**真实产物 DTB**（`tools/tests/fixtures/`，md5 `147678fe…`）：
+原样必须精确报红 2 条 hdmi、摘掉那两棵子树必须 52/52 全绿、6 个字节级负例各必须精确报红 1 条。
+本机也能秒级复跑：`python3 tools/board-parity-check.py <dtb>`。
+
+> run #73 那块红 4 条，全部是**判据写法**问题、不是 DTB：`fdtget -t x` 输出不带 `0x` 前缀、
 > 且 gpios 第一格是随树变化的 phandle（本树 `0x8b`/`0x3f`），旧断言写死 `0x030x090x01`、`0x6151`、
 > phandle=0 于是把**完全正确的镜像**判死；`fdtget -t s` 读 phandle 属性还会直接失败，
 > `|| echo MISSING` 把"存在"读成"缺失"。教训：判据绑语义，不绑某次定案的字符串。
