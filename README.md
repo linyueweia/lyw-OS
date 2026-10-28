@@ -369,6 +369,8 @@ patch/kernel/rk35xx-vendor-6.1/dt/*.dts        板级设备树（框架会自动
 （kernel-files/ 里的旧 DTB 已删除：它是 rgmii-id 且无 tx/rx_delay 的历史件，CI 不再用它兜底；
  该目录不在 git 里，仅本地可能残留空目录）
 kernel-files/{idbloader.img,u-boot.itb}      仅作参考备份，**不再注入镜像**
+tools/dts-lint.py                            板级 DTS 语法门（1 秒，无需 dtc/内核树）—— CI 在内核 make 之前先跑它，
+                                              免得语法错白烧一小时（run #62 实测 3414 秒才报 syntax error）
 extensions/t68m-roceos.sh                     框架扩展：构建阶段补齐 roceos 网页后台 + AIC8800 WiFi 固件
                                               （载荷走 userpatches/overlay，服务用 chroot_sdcard systemctl enable 启用）
 .github/workflows/build.yml                    CI：云编译 + 镜像后处理 + DDR / 设备树 / 板级对齐 /

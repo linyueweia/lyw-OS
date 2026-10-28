@@ -106,6 +106,17 @@ jobs:
           [ "$n_after" -ge 1 ] || { echo "!! DDR 固件替换失败"; exit 1; }
           grep -n 'rk3568_ddr' "$DDRINC" | sed 's/^/    /'
 
+      - name: Board DTS syntax gate
+        # 板级 DTS 语法门（1 秒）—— 2026-10-28 run #62 的教训：手滑把
+        # `poll-interval = <100>;` 写成 `poll-interval = 100>;`，dtc 要等到内核 make
+        # 阶段才报 `rk3568-lyt-t68m.dts:51.19-22 syntax error`，白烧 3414 秒（57 分钟）。
+        # 这类错在源码上是纯文本可判定的，这里 1 秒判死；真正的 dtc 编译仍由内核 make 兜底。
+        run: |
+          set -e
+          echo "--- 板级 DTS 语法门 ---"
+          python3 t68m/tools/dts-lint.py t68m/patch/kernel/rk35xx-vendor-6.1/dt/*.dts
+          echo "    ✅ 板级 DTS 语法形态通过"
+
       - name: Fetch roceos web-UI payload into userpatches/overlay
         # 官方 iNextOS 镜像自带 roceos 网页后台（/opt/roceos + /opt/roceos-ai +
         # 3 个 systemd 服务 + nginx 站点与证书 + Flask 栈），本适配仓库原先缺这一整套，

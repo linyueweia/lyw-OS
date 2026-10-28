@@ -31,24 +31,18 @@
 		stdout-path = "serial2:1500000n8";
 	};
 
-	/* 复位键：按官方 DTS（immortalwrt rk3568-lyt-t68m.dts）的 gpio-keys 写法，
-	   gpio3 RK_PB1 低有效，50ms 去抖，上报 KEY_RESTART。
-	   原 adc-keys(saradc0 + 1750000mV 阈值) 方案废弃 —— 依赖 ADC 分压精度，
-	   阈值漂移时按键失灵；官方直接用 GPIO 直读，不受电压影响。
-	   pinctrl 组 reset_button_pin(<3 RK_PB1 RK_FUNC_GPIO &pcfg_pull_up>) 本文件已有。 */
-	/* 按键：与 iStoreOS 官方 T68M DTS（istoreos-25.12）一致，用 adc-keys
-	   （saradc0 + 1750000mV 阈值）。2026-10-28 曾按 immortalwrt 594ab12 改成
-	   gpio-keys，经复核 iStoreOS 件才是本板权威件，已回退。 */
-	/* 按键：板上有两个 —— 复位键走 GPIO（gpio3 RK_PB1，低有效，50ms 去抖，
-	   上报 KEY_RECOVERY/KEY_RESTART），另有 saradc0 上的 RECOVERY 键走 ADC。
-	   两份权威件（xck-nas 飞牛金标准 DTS、iStoreOS 官方件）都保留 adc-keys，
-	   xck-nas 另有 gpio-keys 复位键，故两者并存，谁也别删谁。 */
+	/* 按键：板上有两个，谁也别删谁 —— ①复位键走 GPIO（gpio3 RK_PB1 低有效、
+	   50ms 去抖、上报 KEY_RESTART），pinctrl 组 reset_button_pin 本文件已有；
+	   ②saradc0 上的 RECOVERY 键走 ADC（keyup 1750000mV 阈值）。
+	   xck-nas 飞牛金标准件两把键都有；iStoreOS 官方件只保留 adc-keys。
+	   2026-10-28 曾按 immortalwrt 594ab12 把 adc-keys 整个换成 gpio-keys，
+	   复核权威件后回退成两者并存。 */
 	adc-keys {
 		compatible = "adc-keys";
 		io-channels = <&saradc 0>;
 		io-channel-names = "buttons";
 		keyup-threshold-microvolt = <1750000>;
-		poll-interval = 100>;
+		poll-interval = <100>;
 
 		button-recovery {
 			label = "RECOVERY";
