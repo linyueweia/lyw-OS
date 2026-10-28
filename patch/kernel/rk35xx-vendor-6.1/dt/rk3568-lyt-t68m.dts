@@ -335,7 +335,9 @@
 		<594000000 0x8029 0x0000 0x0088>,
 		<000000000 0x0000 0x0000 0x0000>;
 	/* BSP 的 rk356x.dtsi 只给了 port@0(hdmi_in_vp0/vp1，进)，没有输出端口。
-	   官方 DTS 的 &hdmi_out 就是这里的 port@1，与根节点 hdmi-con 对接。 */
+	   官方 DTS 的 &hdmi_out 就是这里的 port@1，与根节点 hdmi-con 对接。
+	   注意：dtc 要求属性必须写在子节点之前，status 不能放在 ports 后面。 */
+	status = "okay";
 	ports {
 		port@1 {
 			reg = <1>;
@@ -345,7 +347,6 @@
 			};
 		};
 	};
-	status = "okay";
 };
 
 &hdmi_in_vp0 {
@@ -621,24 +622,7 @@
 	rgmii_phy0: ethernet-phy@0 {
 		compatible = "ethernet-phy-ieee802.3-c22";
 		reg = <0>;
-		leds {
-			#address-cells = <1>;
-			#size-cells = <0>;
-
-			led@1 {
-				reg = <1>;
-				color = <LED_COLOR_ID_AMBER>;
-				function = LED_FUNCTION_LAN;
-				default-state = "keep";
-			};
-
-			led@2 {
-				reg = <2>;
-				color = <LED_COLOR_ID_GREEN>;
-				function = LED_FUNCTION_LAN;
-				default-state = "keep";
-			};
-		};
+		realtek,led-data = <0x6151>;
 	};
 };
 
@@ -647,24 +631,7 @@
 	rgmii_phy1: ethernet-phy@0 {
 		compatible = "ethernet-phy-ieee802.3-c22";
 		reg = <0>;
-		leds {
-			#address-cells = <1>;
-			#size-cells = <0>;
-
-			led@1 {
-				reg = <1>;
-				color = <LED_COLOR_ID_AMBER>;
-				function = LED_FUNCTION_LAN;
-				default-state = "keep";
-			};
-
-			led@2 {
-				reg = <2>;
-				color = <LED_COLOR_ID_GREEN>;
-				function = LED_FUNCTION_LAN;
-				default-state = "keep";
-			};
-		};
+		realtek,led-data = <0x6151>;
 	};
 };
 

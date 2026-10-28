@@ -113,7 +113,10 @@ jobs:
         # 这类错在源码上是纯文本可判定的，这里 1 秒判死；真正的 dtc 编译仍由内核 make 兜底。
         run: |
           set -e
-          echo "--- 板级 DTS 语法门 ---"
+          echo "--- 板级 DTS 语法门（含判据自测）---"
+          # 先跑判据自身的正/负例自测：负例不响 = 判据没在干活。
+          # run #65 就是"只查括号配平、漏了属性在子节点之后"，白烧 3608 秒。
+          python3 t68m/tools/dts-lint.py --selftest
           python3 t68m/tools/dts-lint.py t68m/patch/kernel/rk35xx-vendor-6.1/dt/*.dts
           echo "    ✅ 板级 DTS 语法形态通过"
 
@@ -297,12 +300,15 @@ jobs:
           _kg=$(_j x /gpio-keys/button-reset gpios | tr -d ' ')
           [ "$_kg" = "0x030x090x01" ] || { echo "!! 复位键 gpios 应为 <0x03 0x09 0x01>(gpio3 PB1 低有效)，实为 $_kg"; afail=1; }
           [ "$(_j s /adc-keys compatible)" = "adc-keys" ] || { echo "!! /adc-keys 缺失（金标准也保留 ADC 键）"; afail=1; }
-          # ② 千兆口 PHY 用 leds 子节点；gmac PHY 不得有 realtek,led-data
+          # ② 千兆口 PHY 的 LED：用 realtek,led-data = <0x6151>（T68M 厂商出厂件的值）。
+          #    依据：同一棵 6.1.115-vendor 内核构建的官方 Easepi-r1 DTB 用的也是
+          #    realtek,led-data（值 0xac10），iStoreOS 官方件同样 —— 6.1 vendor 系就该这么写。
+          #    2026-10-28 曾按 fnOS(6.12) 的件改成 leds 子节点，经与官方 R1 DTB 比对后回退。
           for _p in /ethernet@fe2a0000 /ethernet@fe010000; do
-            _fn=$(_j s "$_p/mdio/ethernet-phy@0/leds/led@1" function)
-            [ "$_fn" = "lan" ] || { echo "!! $_p PHY 缺 leds 子节点(led@1 function=lan)，实为 $_fn"; afail=1; }
-            [ "$(_j x "$_p/mdio/ethernet-phy@0" realtek,led-data)" = "MISSING" ] || {
-              echo "!! $_p gmac PHY 出现 realtek,led-data（金标准把它放在 RTL8125 上，不在 RTL8211F 上）"; afail=1; }
+            _ld=$(_j x "$_p/mdio/ethernet-phy@0" realtek,led-data | tr -d ' ')
+            [ "$_ld" = "0x6151" ] || { echo "!! $_p PHY realtek,led-data 应为 0x6151，实为 $_ld"; afail=1; }
+            if _has "$_p/mdio/ethernet-phy@0/leds"; then
+              echo "!! $_p PHY 不该有 leds 子节点（那是 6.12 的写法，6.1 vendor 用 realtek,led-data）"; afail=1; fi
           done
           # ③ 四个口的 label（金标准 lan1~lan4）
           [ "$(_j s /ethernet@fe2a0000 label)" = "lan1" ] || { echo "!! gmac0 label 应为 lan1"; afail=1; }
