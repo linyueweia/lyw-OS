@@ -355,7 +355,10 @@ xz -dc iNextOS_*.img.xz | sudo dd of=/dev/sdX bs=4M conv=fsync status=progress
 sync
 ```
 
-**刷卡后必跑（GPT 元数据重定位 —— "刷进 TF 卡系统起不来"就是这一坑，2026-10-28 定案）**
+**刷卡后（兜底步骤）：GPT 元数据重定位 —— "刷进 TF 卡系统起不来"的那一坑，2026-10-28 定案**
+
+> **先看这条**：刷完卡**直接上机就行，不必跑下面的脚本**。本仓的 T68M 实机就是 GPT 镜像写进 29.1 GiB 盘跑起来的，`journalctl -k` 两次启动全量 grep `gpt|partition table` **零条报错** —— 这个内核吃这种表。
+> 下面的 `gpt-fix.py` 是**兜底**：只有当卡起不来、且串口里 `mmcblk1` 后面**不出 `p1 p2`** 时才用（那才是内核拒表，与 DTB/驱动无关）。
 
 镜像自身是 GPT（`IMAGE_PARTITION_TABLE=gpt`，与官方 R1 发布件同布局：p1 256 MiB FAT bootfs + p2 ext4 rootfs）。GPT 的**备份头 / 末可用扇区 / 保护 MBR 的 count 全是按镜像文件大小（≈3.4 GiB）算的**。把镜像 dd 进一张更大的卡（16/32/64 GiB）后，这三个字段都指向镜像末尾而不是卡的末尾：
 
