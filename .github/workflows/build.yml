@@ -670,6 +670,13 @@ jobs:
 
           sudo losetup -d "$LOOP"
 
+          # 收尾：GPT 元数据自洽化 + 复检（与飞牛线 `buildfnos.sh:317` 同一做法）。
+          # 理由：镜像被挂载/改动过之后，备份头/末可用扇区/保护 MBR count 都必须与
+          # **当前文件大小**重新对齐；工具自身带 --selftest（构建开头已跑过）。
+          # 注意这只保证"镜像自洽"，**不等于"刷进更大的卡就能起"**：
+          #   写卡后必须再跑 `python3 tools/gpt-fix.py <卡> --apply --renew-partuuid=2`。
+          python3 t68m/tools/gpt-fix.py "$IMG" --apply || { echo "!! 镜像 GPT 自洽化失败"; exit 1; }
+
           if [ -f "${IMG}.xz" ]; then
             # 注意顺序：xz 压缩成功后**会删除原始 .img**，所以必须是
             # 「先算 .img 校验 → 再压缩 → 最后算 .xz 校验」。

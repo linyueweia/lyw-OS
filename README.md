@@ -378,7 +378,7 @@ python3 tools/gpt-fix.py /dev/sdX --apply --renew-partuuid=2
 lsblk -o NAME,SIZE,FSTYPE,PARTLABEL /dev/sdX
 ```
 
-引导件不用跟着改：armbian 的 `boot.cmd` 用 `part uuid ${devtype} ${devnum}:${partition}` 现场取值，换 GUID 不影响任何东西。工具只动 GPT 元数据（保护 MBR / 主头 / 主项 / 备份项 / 备份头），**分区内容零修改**；自带 `--selftest`（正例 1 / 负例 2 / APPLY 2 / PARTUUID 1），CI 每次构建先跑自测，并对产物镜像做一次自洽检查 —— 但**镜像自洽 ≠ 卡能起**，写进更大的卡后那一步绕不过去。
+引导件不用跟着改：armbian 的 `boot.cmd` 用 `part uuid ${devtype} ${devnum}:${partition}` 现场取值，换 GUID 不影响任何东西。工具只动 GPT 元数据（保护 MBR / 主头 / 主项 / 备份项 / 备份头），**分区内容零修改**；自带 `--selftest`（正例 1 / 负例 2 / APPLY 2 / PARTUUID 1），CI 每次构建先跑自测，**构建收尾再对产物镜像做一次 `--apply` 自洽化**（与飞牛线 `buildfnos.sh:317` 同一做法：任何挂载/改动之后都要按当前文件大小重算）—— 但**镜像自洽 ≠ 卡能起**，写进更大的卡后那一步绕不过去。
 
 **在 Windows 上刷完卡怎么跑这一步**（手上没有 Linux 时）：把读卡器拔下来插到**任意一台在跑的 iNextOS/飞牛 设备的 USB 口**（本板、R5S、K1、H88K 都行），远端执行即可：
 
