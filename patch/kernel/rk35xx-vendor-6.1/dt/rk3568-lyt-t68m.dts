@@ -614,24 +614,37 @@
 };
 
 &mdio0 {
-	/* EEE（IEEE 802.3az / LPI）按官方默认**保持打开**，本仓库不在这里做 eee-broken-*。
-	   实机复核（2026-10-17，主路由 iNextOS-XCK）：两个 RTL8211F 口的 EEE 通告寄存器本来就是
-	   0（`Advertised EEE link modes: Not reported`）、对端 K1 的 LPI 计数全 0，链路无 LPI 活动；
-	   此前的"整口重协商掉线"经日志比对是对端设备重启（每次掉线后 1–5 s 对端就重新 DHCP）。
-	   ⇒ 不再加 eee-broken-1000t，避免与官方（easepi-r1.csc / 同内核树）行为不一致。 */
+	/* EEE（IEEE 802.3az / LPI）：**只关 1000BASE-T**，用内核官方机制 eee-broken-1000t。
+	   依据（2026-10-28 实机定案）：
+	   · 本口 PHY = RTL8211F，链路上 EEE 处于 active，LPI 进出已 1568/1570 次，
+	     `phy_eee_wakeup_error_n=1`（即 MDIO_PCS_EEE_WK_ERR 记录到一次唤醒序列失败）；
+	   · 故障现象：carrier 仍在、协商速率仍是 1000M，但该口收不到包，下级设备 DHCP 拿不到
+	     地址 → 30 s 后自分配 169.254；拔插网线（强制重新协商）即恢复；
+	   · 机制：stmmac_main.c:1090 `phy_init_eee(phy, !rx_clk_runs_in_lpi)`，而该内核里
+	     `rx_clk_runs_in_lpi` 无任何赋值入口 ⇒ 恒为 0 ⇒ phy.c:1355-1358 给 PHY 打开
+	     `MDIO_PCS_CTRL1_CLKSTOP_EN`（LPI 期间停 xMII RX 时钟）⇒ 来包要先唤醒时钟，唤醒
+	     竞争失败即丢帧。官方 R1 走的是同一条代码路径，它没犯只是因为对端/走线没触发。
+	   · 处置：phy-core.c:385 读本属性 → eee_broken_modes |= MDIO_EEE_1000T →
+	     phy.c:1454 在写 MDIO_AN_EEE_ADV 时把 1000T 从通告里剔掉并重新协商 ⇒ 1G 的 EEE
+	     不再协商，100M 与两个 2.5G 口（RTL8125，另一套驱动）完全不受影响。
+	     同一棵内核树里有 18 个厂商 DTS 用同一写法（imx8mp-evk、fsl-ls1028a-kontron、
+	     meson-g12a-x96-max、am335x-baltos 等），属标准做法。 */
 	rgmii_phy0: ethernet-phy@0 {
 		compatible = "ethernet-phy-ieee802.3-c22";
 		reg = <0>;
 		realtek,led-data = <0x6151>;
+		eee-broken-1000t;
 	};
 };
 
 &mdio1 {
-	/* 同上：eth1(GMAC1) 亦为 RTL8211F，EEE 保持官方默认开启 */
+	/* eth1(GMAC1) 同为 RTL8211F：与 eth0 同源同修，只关 1000BASE-T 的 EEE。
+	   两个千兆口必须一起改 —— 只改一个，另一个仍会进 LPI、仍会偶发丢包。 */
 	rgmii_phy1: ethernet-phy@0 {
 		compatible = "ethernet-phy-ieee802.3-c22";
 		reg = <0>;
 		realtek,led-data = <0x6151>;
+		eee-broken-1000t;
 	};
 };
 

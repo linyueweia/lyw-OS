@@ -295,10 +295,24 @@ jobs:
             [ "$_r" = "$_rx" ] || { echo "!! $_n rx_delay 应为 0x$_rx"; exit 1; }
           done
           sudo dtc -I dtb -O dts "$DT" -o /tmp/t68m-img.dts 2>/dev/null || true
-          if grep -q "eee-broken" /tmp/t68m-img.dts; then
-            echo "!! 镜像 DTB 里出现 eee-broken-*（与 iNextOS 官方默认不一致）"; exit 1
-          fi
-          echo "    ✅ 千兆口时序 = rgmii + MAC 延迟；EEE 未在 DT 层关闭"
+          # EEE：只关 1000BASE-T（内核官方机制 eee-broken-1000t）。
+          # 2026-10-28 实机定案：RTL8211F 走 LPI 时钟停摆（CLKSTOP_EN），唤醒竞争失败会
+          # 出现"carrier 正常、速率正常、但该口收不到包 → 下级设备 DHCP 拿不到地址 →
+          # 掉到 169.254 → 拔插网线恢复"。100M 与两个 2.5G 口（RTL8125）不受影响。
+          for p in /ethernet@fe2a0000/mdio/ethernet-phy@0 /ethernet@fe010000/mdio/ethernet-phy@0; do
+            _props=$(sudo fdtget -p "$DT" "$p" 2>/dev/null | tr '\n' ' ')
+            case "$_props" in
+              *eee-broken-1000t*) echo "    ✅ $p 已关闭 1000BASE-T 的 EEE" ;;
+              *) echo "!! $p 缺少 eee-broken-1000t（RTL8211F 会进 LPI、偶发整口收不到包）"; exit 1 ;;
+            esac
+            # 反断言：只许关 1000T，不许顺带把 100M/10G 也关掉（那属于过度偏离）
+            for _bad in eee-broken-100tx eee-broken-10gt; do
+              case "$_props" in
+                *"$_bad"*) echo "!! $p 出现了 $_bad（本项目只允许 eee-broken-1000t）"; exit 1 ;;
+              esac
+            done
+          done
+          echo "    ✅ 千兆口时序 = rgmii + MAC 延迟；EEE 仅关闭 1000BASE-T"
 
           # (2d-2) 板级对齐自证（2026-10-28 定口径）
           #      **板级硬件以 xck-nas 仓的飞牛金标准 DTS 为准**（xck-nas/dts/rk3568-lyt-t68m.dts，
@@ -421,12 +435,16 @@ jobs:
                    "$1" "$pm" "$tx" "$rx" "$2" "$3" "$4"
             [ "$pm" = "$2" ] && [ "$tx" = "$3" ] && [ "$rx" = "$4" ] || dfail=1
           done
-          # EEE 按官方默认保持打开：DTB 里不得出现 eee-broken-*（反向断言）
+          # EEE：两个千兆口必须带 eee-broken-1000t（只关 1000BASE-T；2.5G 口不动）
+          # 2026-10-28 定案：RTL8211F 的 LPI 唤醒竞争 → carrier/速率正常但整口收不到包。
           for p in /ethernet@fe2a0000/mdio/ethernet-phy@0 /ethernet@fe010000/mdio/ethernet-phy@0; do
-            if sudo fdtget -p "$DT" "$p" 2>/dev/null | grep -q "eee-broken"; then
-              echo "    ❌ $p 出现 eee-broken-*（与官方默认不一致）"; dfail=1
+            if sudo fdtget -p "$DT" "$p" 2>/dev/null | grep -qx "eee-broken-1000t"; then
+              echo "    ✅ $p eee-broken-1000t 在位（1000BASE-T EEE 已关）"
             else
-              echo "    ✅ $p 无 eee-broken-*（EEE 保持官方默认）"
+              echo "    ❌ $p 缺少 eee-broken-1000t（会进 LPI、偶发整口收不到包）"; dfail=1
+            fi
+            if sudo fdtget -p "$DT" "$p" 2>/dev/null | grep -qE "eee-broken-(100tx|10gt)"; then
+              echo "    ❌ $p 出现 eee-broken-100tx/10gt（只允许 1000t）"; dfail=1
             fi
           done
           [ "$dfail" = 0 ] || { echo "!! 千兆口 RGMII 时序 / EEE 写法与官方不一致"; exit 1; }
