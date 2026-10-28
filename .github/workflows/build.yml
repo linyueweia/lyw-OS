@@ -119,6 +119,12 @@ jobs:
           python3 t68m/tools/dts-lint.py --selftest
           python3 t68m/tools/dts-lint.py t68m/patch/kernel/rk35xx-vendor-6.1/dt/*.dts
           echo "    ✅ 板级 DTS 语法形态通过"
+          echo "--- GPT 元数据判据自测（写卡后必跑的那把工具的负例自测）---"
+          # 镜像刷进比它大的 TF 卡后，备份 GPT/末可用扇区/保护 MBR count 全部失配：
+          # U-Boot 宽容照过，内核严格拒表 → 卡上不出 p1 p2 → Waiting for root device。
+          # 工具本身必须先带负例自测（正例 1 / 负例 2 / APPLY 2 / PARTUUID 1）。
+          python3 t68m/tools/gpt-fix.py --selftest
+          echo "    ✅ gpt-fix 判据自测通过"
 
       - name: Fetch roceos web-UI payload into userpatches/overlay
         # 官方 iNextOS 镜像自带 roceos 网页后台（/opt/roceos + /opt/roceos-ai +
@@ -199,6 +205,11 @@ jobs:
             *) echo "!! 镜像名不含 _minimal：BUILD_MINIMAL 没有传 yes，会装进官方没有的一整批包"; exit 1 ;;
           esac
           echo "target image: $IMG"; ls -lh "$IMG"
+          # (0b) 镜像自身的 GPT 必须自洽（备份头落在镜像末尾）。
+          #      注意：这不等于"写进卡就能起" —— 写成比镜像大的卡后必须再跑
+          #      `python3 tools/gpt-fix.py /dev/sdX --apply --renew-partuuid=2`，
+          #      否则内核严格校验拒表、卡上不出 p1 p2（U-Boot 仍能过，最迷惑人的形态）。
+          python3 t68m/tools/gpt-fix.py "$IMG" || { echo "!! 镜像 GPT 元数据不自洽"; exit 1; }
 
           # (0) 引导件来源校验：确认 idbloader 内嵌的 DDR 固件确实是升级后的版本。
           #     背景：框架 rockchip64_common.inc 默认 rk3568 用 rkbin 的
