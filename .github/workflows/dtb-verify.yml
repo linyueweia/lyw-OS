@@ -61,8 +61,9 @@ jobs:
           tar -xzf /tmp/kern.tar.gz -C kern --strip-components=1 --wildcards \
               '*/arch/arm64/boot/dts/rockchip/*' \
               '*/include/dt-bindings/*' \
+              '*/include/uapi/linux/*' \
               '*/scripts/dtc/include-prefixes/*'
-          du -sh kern/arch/arm64/boot/dts/rockchip kern/include/dt-bindings kern/scripts/dtc/include-prefixes
+          du -sh kern/arch/arm64/boot/dts/rockchip kern/include/dt-bindings kern/include/uapi/linux
           ls -l kern/arch/arm64/boot/dts/rockchip/rk3568.dtsi \
                 kern/include/dt-bindings/input/linux-event-codes.h
           echo "--- include-prefixes 的 dt-bindings 软链（内核同款 include 通道）:"
