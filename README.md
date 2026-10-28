@@ -358,6 +358,18 @@ sync
 **链路稳定性 / EEE（2026-10-17 定案：网卡配置全部回归 inextos 官方写法，镜像里没有任何网卡运行时服务）**：eth0(GMAC0) 与 eth1(GMAC1) 都是 RK3568 dwmac + RTL8211F，写法与官方板级（easepi-r1 / easepi-r2 / h88k）一致 —— `phy-mode = "rgmii"` + `tx_delay`/`rx_delay`（本板取值取自厂商 6.12 出厂 DTB：gmac0 `0x3c`/`0x2f`、gmac1 `0x42`/`0x28`），RGMII 延迟全部由 MAC 侧产生。**为什么不用 `rgmii-id`**：vendor `dwmac-rk.c` 的 `PHY_INTERFACE_MODE_RGMII_ID` 分支是 `set_to_rgmii(bsp, -1, -1)`，`DELAY_ENABLE` 宏对 -1 取 `*_DLY_DISABLE` ⇒ MAC 侧延迟位被清零、DT 里的 `tx_delay/rx_delay` 根本不读 （实测 56B 丢 65% / 1400B 丢 90%，而接口错误计数为 0）；只把 `phy-mode` 改成 `"rgmii"` 却不给延迟值则是两个千兆口一起死（已实机证伪）。**因此删除了原有的两个运行时补丁件**：直写 GRF `0xfdc60000` 的 `t68m-gmac-delay`、`gpioset` 常驻的 `gmac-phy-hold`，只留 DT 里的 `snps,reset-gpio` / `-active-low` / `-delays-us`。**EEE（IEEE 802.3az / LPI）按官方默认保持打开**：DT 不写 `eee-broken-*`、不装 `eth-eee-off`、不设 `options r8125 eee_enable=0`。（2026-10-13 曾按"高峰期密集 Link Down + 对端 `phy_eee_wakeup_error_n=8126`"装过 EEE 关闭服务；2026-10-17 在主路由 `iNextOS-XCK` 上按日志复核推翻：四个口 EEE 本来就是 disabled（RTL8211F 的 EEE 通告寄存器为 0）、对端 K1 的 LPI 计数全 0，而 141 次 Link Down 每次都伴随对端 1–5 s 内重新 DHCP（K1 / Tenda 在重启），20 s 的空档也不符合本端自协商时长，最后一次事件与对端上线同秒。⇒ 掉线是对端设备重启，不是 EEE。）**CI 反向断言**：镜像里不得出现 `t68m-gmac-delay` / `t68m-eee-off` / `eth-eee-off.service` / `gmac-phy-hold.service` / `r8125-eee.conf`；DTB 里不得出现 `eee-broken-*`，且两个 gmac 节点必须是 `rgmii` + 上述延迟值（含 `clock_in_out = "output"`）。
 5. 登录：`root` / `password`
 
+**包集合必须与官方 minimal 同口径（2026-10-28 定案，实机比对官方 R1 发布件得出）**：构建必须传 **`BUILD_MINIMAL=yes`**。依据是硬证据，不是风格偏好：
+
+- 官方发布件文件名是 `iNextOSA_26.2.1_Easepi-r1_trixie_vendor_6.1.115_minimal.img.xz`，而框架 `lib/functions/image/rootfs-to-image.sh:21` 只有 `BUILD_MINIMAL=yes` 才给文件名加 `_minimal` 后缀；
+- 实测包数：官方 R1 镜像根分区 dpkg 状态 **718 个包**，我们旧构建（`BUILD_MINIMAL=no`）**958 个包**，差值就是框架 `config/cli/<rel>/main/packages.additional` 那整份（`aggregation.sh:78` 原文注释：*if yes, it does not include packages.additional*）；
+- 多出来的包里，直接冲击网络行为的有两个：
+  - **`avahi-autoipd`** —— 带 `if-up.d` 钩子，接口 DHCP 失败时给网卡配 **169.254.x.x** 链路本地地址，与"网口灯亮、下级设备拿不到 IP"的现象直接对应；
+  - **`unattended-upgrades`** —— 后台自动升级，会重启 `dnsmasq`/网络相关服务，对应"用几小时就掉、重启后又正常"；
+  - 另有 `vnstat`（额外抓包统计）、`plymouth`、`dkms`、`rng-tools`、`build-essential` 等 NAS 不需要的件。
+- CI 已加两道硬断言：镜像文件名必须含 `_minimal`；`avahi-autoipd`/`unattended-upgrades`/`vnstat`/`iperf3`/`plymouth`/`dkms`/`rng-tools-debian`/`build-essential` 不得出现在镜像的 `dpkg` 状态里。
+
+**网络栈运行时不是问题（2026-10-28 实测，勿再归因到这里）**：同一台实机上，`br-lan1` 的 dnsmasq DHCP（池 192.168.11.100–250、`dhcp-authoritative`）对 20 个新建 veth 客户端 **20/20 全部发到租约**；`nft` 的 `masquerade`、`br-lan1→eth0` accept 计数在涨；`ip_forward=1`、`conntrack 31/524288`；两个 LAN 口各打 300 个 1400B 包 **0% 丢包**、`ethtool -S` 错误计数全 0；`lspci` 两条 RTL8125 都是 `Gen.2 x1 link up`、**ASPM Disabled**、无 AER。所以"网口不稳"不是 DTS 时序、也不是 dnsmasq/NAT 配置，而是上面这条包集合偏差（官方有、我们没有的差异已经被逐项对齐）。
+
 **关机断电（2026-10-22 定案）**：`&rk809` 的关机句柄属性必须写 **vendor 名 `rockchip,system-power-controller;`**。vendor 6.1 的 `drivers/mfd/rk808.c` 只做 `of_property_read_bool(np, "rockchip,system-power-controller")` 判断；主线写法（无前缀 `system-power-controller;`，immortalwrt 风格板级 DTS 通篇如此）在 vendor 树里**不被识别**，于是关机句柄不注册 → `poweroff` 退化成 halt：整板不断电、风扇照转、网口灯亮。实机对照（同一块 T68M、同一个风扇）：iStoreOS（6.12 主线）关机风扇停；本镜像（6.1 vendor）关机风扇不停。原 DTS 是从 immortalwrt 主线设备树移植的，把这行原样带过来才中招；官方 Easepi R1 的 vendor DTB 用的是带前缀写法。CI 在反解出的 DTB 上**锚行首**断言（`^\s*rockchip,system-power-controller;`），并反断言无前缀写法不得存在 —— 裸 `grep system-power-controller` 会被长名命中而假绿。
 
 ## 目录

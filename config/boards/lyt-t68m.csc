@@ -35,7 +35,17 @@ BOOTFS_TYPE="fat"
 #   ENABLE_EXTENSIONS="istorenext,t68m-roceos" 传入，本文件不再重复声明（避免与 CI 双写）。
 # 本地构建必须自己带上，否则出来的镜像没有 roceos 网页后台、也没有 istorenext，且过程不报错：
 #   ./compile.sh build BOARD=lyt-t68m BRANCH=vendor RELEASE=trixie \
-#     ENABLE_EXTENSIONS="istorenext,t68m-roceos" BUILD_DESKTOP=no BUILD_MINIMAL=no EXPERT=yes
+#     ENABLE_EXTENSIONS="istorenext,t68m-roceos" BUILD_DESKTOP=no BUILD_MINIMAL=yes EXPERT=yes
+#
+# BUILD_MINIMAL=yes 是**必须**的（2026-10-28 定案，与官方发布件同口径）：
+#   官方 R1 发布件文件名带 `_minimal`（框架 rootfs-to-image.sh:21 只有 yes 才加这个后缀），
+#   实测 718 个包。传 no 时框架会装 config/cli/<rel>/main/packages.additional 整份，
+#   我们因此装到 958 个包，多出 avahi-autoipd / unattended-upgrades / vnstat / iperf3 /
+#   plymouth / dkms / rng-tools / build-essential 等。其中
+#     · avahi-autoipd 在 DHCP 失败时把网卡配成 169.254 链路本地地址（插件钩子在 if-up.d）
+#     · unattended-upgrades 后台自动升级并重启 dnsmasq/网络服务
+#   两者都会表现成“网口灯亮、下级设备拿不到 IP / 用几小时就掉”，且官方 minimal 完全没有。
+#   CI 已加硬断言：镜像文件名必须含 _minimal，且上述包不得出现在镜像的 dpkg 状态里。
 
 # 网络栈：对齐官方标准镜像（官方 EasePi R1 实测 dpkg 里根本没有 network-manager）。
 # 框架默认 BUILD_MINIMAL=no → NETWORKING_STACK=network-manager，会装并启用

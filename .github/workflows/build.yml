@@ -165,12 +165,20 @@ jobs:
           # 注释必须放在整条命令【之前】：放进 "\" 续行之间会把后续参数整段注释掉
           # （曾因此丢掉 KERNEL_CONFIGURE=no，框架弹出交互式菜单并以 error 43 失败）
           # ENABLE_EXTENSIONS 是扩展白名单（框架逐个 enable_extension），必须含自建扩展
+          # BUILD_MINIMAL=yes —— 与官方 R1 发布件同口径（官方文件名正是
+          #   iNextOSA_26.2.1_Easepi-r1_trixie_vendor_6.1.115_minimal.img.xz）。
+          #   传 no 会装 framework 的 config/cli/<rel>/main/packages.additional 整份
+          #   （avahi-autoipd / unattended-upgrades / vnstat / iperf3 / plymouth /
+          #   dkms / rng-tools / build-essential …），实测装出 958 包，官方 minimal 是 718 包。
+          #   其中 avahi-autoipd 会在 DHCP 失败时往网卡塞 169.254 链路本地地址、
+          #   unattended-upgrades 会在后台升级并重启 dnsmasq/网络服务 —— 都会表现为
+          #   “网口灯亮、下级设备拿不到 IP / 用几小时就掉”，与官方行为不一致。
           ./compile.sh build \
             BOARD=lyt-t68m \
             BRANCH=vendor \
             RELEASE=trixie \
             ENABLE_EXTENSIONS="istorenext,t68m-roceos" \
-            BUILD_MINIMAL=no \
+            BUILD_MINIMAL=yes \
             BUILD_DESKTOP=no \
             KERNEL_CONFIGURE=no \
             COMPRESS_OUTPUTIMAGE="sha,img,xz" \
@@ -184,6 +192,12 @@ jobs:
           set -e
           IMG=$(ls build/output/images/*.img | head -n1)
           [ -n "$IMG" ] || { echo "!! output image not found"; exit 1; }
+          # (0a) 包集合必须与官方 minimal 同口径：镜像文件名带 _minimal 才说明
+          #      BUILD_MINIMAL=yes 真生效（框架 rootfs-to-image.sh:21 用这个后缀）。
+          case "$IMG" in
+            *_minimal*) echo "    ✅ 镜像名含 _minimal（与官方 R1 发布件同口径）" ;;
+            *) echo "!! 镜像名不含 _minimal：BUILD_MINIMAL 没有传 yes，会装进官方没有的一整批包"; exit 1 ;;
+          esac
           echo "target image: $IMG"; ls -lh "$IMG"
 
           # (0) 引导件来源校验：确认 idbloader 内嵌的 DDR 固件确实是升级后的版本。
@@ -456,6 +470,15 @@ jobs:
           for p in network-manager network-manager-openvpn netplan.io chrony; do
             if grep -q "^Package: ${p}\$" "$PROT/var/lib/dpkg/status" 2>/dev/null; then
               echo "    ❌ 多余网络包 ${p}（官方标准镜像不含）"; dfail=1
+            fi
+          done
+          # 与官方 minimal 同口径：framework 的 packages.additional 整份不得进镜像。
+          # 官方 R1 发布件实测 718 包、我们旧构建 958 包，差的就是这批。
+          # 危害最直接的两个：avahi-autoipd（DHCP 失败时塞 169.254 地址）、
+          # unattended-upgrades（后台升级并重启 dnsmasq/网络服务）。
+          for p in avahi-autoipd unattended-upgrades vnstat iperf3 plymouth dkms rng-tools-debian build-essential; do
+            if grep -q "^Package: ${p}\$" "$PROT/var/lib/dpkg/status" 2>/dev/null; then
+              echo "    ❌ 出现 packages.additional 成员 ${p}（官方 minimal 不含，BUILD_MINIMAL 应为 yes）"; dfail=1
             fi
           done
           if [ -e "$PROT/etc/systemd/system/multi-user.target.wants/NetworkManager.service" ]; then
