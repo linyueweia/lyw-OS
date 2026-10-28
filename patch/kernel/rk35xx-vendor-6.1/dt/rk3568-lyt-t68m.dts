@@ -31,17 +31,42 @@
 		stdout-path = "serial2:1500000n8";
 	};
 
+	/* 复位键：按官方 DTS（immortalwrt rk3568-lyt-t68m.dts）的 gpio-keys 写法，
+	   gpio3 RK_PB1 低有效，50ms 去抖，上报 KEY_RESTART。
+	   原 adc-keys(saradc0 + 1750000mV 阈值) 方案废弃 —— 依赖 ADC 分压精度，
+	   阈值漂移时按键失灵；官方直接用 GPIO 直读，不受电压影响。
+	   pinctrl 组 reset_button_pin(<3 RK_PB1 RK_FUNC_GPIO &pcfg_pull_up>) 本文件已有。 */
+	/* 按键：与 iStoreOS 官方 T68M DTS（istoreos-25.12）一致，用 adc-keys
+	   （saradc0 + 1750000mV 阈值）。2026-10-28 曾按 immortalwrt 594ab12 改成
+	   gpio-keys，经复核 iStoreOS 件才是本板权威件，已回退。 */
+	/* 按键：板上有两个 —— 复位键走 GPIO（gpio3 RK_PB1，低有效，50ms 去抖，
+	   上报 KEY_RECOVERY/KEY_RESTART），另有 saradc0 上的 RECOVERY 键走 ADC。
+	   两份权威件（xck-nas 飞牛金标准 DTS、iStoreOS 官方件）都保留 adc-keys，
+	   xck-nas 另有 gpio-keys 复位键，故两者并存，谁也别删谁。 */
 	adc-keys {
 		compatible = "adc-keys";
 		io-channels = <&saradc 0>;
 		io-channel-names = "buttons";
 		keyup-threshold-microvolt = <1750000>;
-		poll-interval = <100>;
+		poll-interval = 100>;
 
 		button-recovery {
 			label = "RECOVERY";
 			linux,code = <KEY_RESTART>;
 			press-threshold-microvolt = <0>;
+		};
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+		pinctrl-names = "default";
+		pinctrl-0 = <&reset_button_pin>;
+
+		button-reset {
+			label = "reset";
+			gpios = <&gpio3 RK_PB1 GPIO_ACTIVE_LOW>;
+			linux,code = <KEY_RESTART>;
+			debounce-interval = <50>;
 		};
 	};
 
@@ -65,6 +90,20 @@
 			function = LED_FUNCTION_STATUS;
 			gpios = <&gpio4 RK_PC5 GPIO_ACTIVE_HIGH>;
 			default-state = "on";
+		};
+	};
+
+	/* HDMI 连接器：官方 DTS 有该节点（hdmi-connector/a 型口），我们此前缺失。
+	   它声明板上那个 HDMI-A 插座，配合下面 &hdmi 的 port@1(hdmi_out_con)
+	   形成完整的 of_graph 链路；缺它时部分驱动路径找不到连接器。 */
+	hdmi-con {
+		compatible = "hdmi-connector";
+		type = "a";
+
+		port {
+			hdmi_con_in: endpoint {
+				remote-endpoint = <&hdmi_out_con>;
+			};
 		};
 	};
 
@@ -187,12 +226,12 @@
 		vin-supply = <&vcc3v3_pi6c>;
 	};
 
-	/* actually fed by vcc12v_dcin */
+	/* actually fed by vcc12v_dcin（官方同注释，vin-supply 按官方指向 vcc3v3_pcie） */
 	vcc3v3_minipcie: vcc3v3-minipcie-regulator {
-		regulator-always-on;
-		regulator-boot-on;
-		compatible = "regulator-fixed";
-		enable-active-high;
+	regulator-always-on;
+	regulator-boot-on;
+	compatible = "regulator-fixed";
+	enable-active-high;
 		gpios = <&gpio0 RK_PC7 GPIO_ACTIVE_HIGH>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&minipcie_enable_h>;
@@ -242,6 +281,7 @@
 	   set_to_rgmii(bsp, -1, -1)，DELAY_ENABLE 宏对 -1 取 *_DLY_DISABLE ⇒ 只留 PHY 侧
 	   2ns、MAC 侧全关，实测采样点临界（56B 丢 65% / 1400B 丢 90%，接口错误计数为 0）。
 	   本板取值取自厂商 T68M 6.12 出厂 DTB（gmii0: 0x3c/0x2f），不是照抄别的板子。 */
+	label = "lan1";
 	phy-mode = "rgmii";
 	tx_delay = <0x3c>;
 	rx_delay = <0x2f>;
@@ -266,6 +306,7 @@
 	clock_in_out = "output";
 	/* 同 gmac0：官方 rgmii + MAC 侧延迟写法；本板 gmac1 取值取自厂商 6.12 出厂 DTB
 	   （0x42/0x28）。两个千兆口同源同修，只改一个 = 另一个继续丢包。 */
+	label = "lan2";
 	phy-mode = "rgmii";
 	tx_delay = <0x42>;
 	rx_delay = <0x28>;
@@ -299,6 +340,17 @@
 		<297000000 0x800b 0x0000 0x01ad>,
 		<594000000 0x8029 0x0000 0x0088>,
 		<000000000 0x0000 0x0000 0x0000>;
+	/* BSP 的 rk356x.dtsi 只给了 port@0(hdmi_in_vp0/vp1，进)，没有输出端口。
+	   官方 DTS 的 &hdmi_out 就是这里的 port@1，与根节点 hdmi-con 对接。 */
+	ports {
+		port@1 {
+			reg = <1>;
+
+			hdmi_out_con: endpoint {
+				remote-endpoint = <&hdmi_con_in>;
+			};
+		};
+	};
 	status = "okay";
 };
 
@@ -575,7 +627,24 @@
 	rgmii_phy0: ethernet-phy@0 {
 		compatible = "ethernet-phy-ieee802.3-c22";
 		reg = <0>;
-		realtek,led-data = <0x6151>;
+		leds {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			led@1 {
+				reg = <1>;
+				color = <LED_COLOR_ID_AMBER>;
+				function = LED_FUNCTION_LAN;
+				default-state = "keep";
+			};
+
+			led@2 {
+				reg = <2>;
+				color = <LED_COLOR_ID_GREEN>;
+				function = LED_FUNCTION_LAN;
+				default-state = "keep";
+			};
+		};
 	};
 };
 
@@ -584,7 +653,24 @@
 	rgmii_phy1: ethernet-phy@0 {
 		compatible = "ethernet-phy-ieee802.3-c22";
 		reg = <0>;
-		realtek,led-data = <0x6151>;
+		leds {
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			led@1 {
+				reg = <1>;
+				color = <LED_COLOR_ID_AMBER>;
+				function = LED_FUNCTION_LAN;
+				default-state = "keep";
+			};
+
+			led@2 {
+				reg = <2>;
+				color = <LED_COLOR_ID_GREEN>;
+				function = LED_FUNCTION_LAN;
+				default-state = "keep";
+			};
+		};
 	};
 };
 
@@ -623,6 +709,7 @@
 		rtl8125_1: pcie-eth@10,0 {
 			compatible = "pci10ec,8125";
 			reg = <0x000000 0 0 0 0>;
+			label = "lan4";
 		};
 	};
 };
@@ -645,9 +732,10 @@
 		#size-cells = <2>;
 
 		rtl8125_2: pcie-eth@20,0 {
-			compatible = "pci10ec,8125";
-			reg = <0x000000 0 0 0 0>;
-		};
+				compatible = "pci10ec,8125";
+				reg = <0x000000 0 0 0 0>;
+				label = "lan3";
+			};
 	};
 };
 

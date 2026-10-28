@@ -361,6 +361,55 @@ extensions/t68m-roceos.sh                     框架扩展：构建阶段补齐 
 .github/workflows/build.yml                    CI：云编译 + 镜像后处理 + DDR / 设备树 / roceos 三重回读自证
 ```
 
+## 板级 DTS 的对齐口径（2026-10-28 定案）
+
+**口径：板级硬件以 xck-nas 仓的飞牛金标准 DTS 为准；属性写法按 iNextOS 的 6.1 vendor BSP 内核适配。**
+
+- **权威件**：`xck-nas/dts/rk3568-lyt-t68m.dts`（fnOS 6.12 + 厂商出厂 DTB 对齐件，含完整 GPU/VPU/NPU 节点）。
+  旁证：`istoreos/istoreos @ istoreos-25.12` 的 `rk3568-t68m.dts`（头部注明源自 `immortalwrt @ 594ab12`，
+  但已按本板分叉）与 `linyueweia/lyw` 的 `custom/0001-rockchip-t68m-enable-sata2-sdio-wifi.patch`。
+- **比对方法**：把同内核树 6 个基线 dtsi 解析成有效树，按节点逐属性比对（宏展开、十六进制归一、覆写合并后比），不是文本 diff。
+
+### 板级一致性现状（与 xck-nas 金标准件逐项对齐）
+
+| 板级项 | 取值 |
+|---|---|
+| 复位键 | `gpio-keys` + `gpios = <&gpio3 RK_PB1 GPIO_ACTIVE_LOW>` + 50ms 去抖（`reset_button_pin` pinctrl 组） |
+| ADC 键 | `adc-keys`（saradc0，keyup 1750000mV）—— 与复位键**并存**，两份权威件都保留 |
+| 千兆口 PHY LED | Realtek `leds` 子节点：`led@1` amber/lan、`led@2` green/lan，`default-state = "keep"` |
+| 2.5G 口 | RTL8125 ×2，`label = "lan3"`(20,0) / `"lan4"`(10,0) |
+| 千兆口名 | `label = "lan1"`(gmac0) / `"lan2"`(gmac1) |
+| `vdda0v9_image`(LDO_REG1) | 950000 |
+| PCIe 3.3V | 两级：`vcc3v3_pi6c`（使能脚 gpio0 RK_PD4 + `always-on`/`boot-on`）→ `vcc3v3_pcie`（`startup-delay-us = 50000`） |
+| miniPCIe 3.3V | `vcc3v3_minipcie`，gpio0 RK_PC7，`regulator-always-on` + `boot-on` |
+| HDMI | `hdmi-con`（`hdmi-connector`/type "a"）+ `&hdmi` 补 `ports/port@1`(`hdmi_out_con`) |
+| 加速器 | GPU/VPU(`rkvdec`/`vdpu`)/`rkvenc`/`iep`/`jpegd`/`rk_rga`/`mpp-srv`/NPU 全部使能 |
+| 千兆口时序 | `phy-mode = "rgmii"` + `tx_delay`/`rx_delay`（`0x3c/0x2f`、`0x42/0x28`），与 xck-nas 同值同注释 |
+
+### 2026-10-28 一次走偏并已回退的改动（留档）
+
+当天先按 upstream `immortalwrt @ 594ab12` 对齐，有 4 项改反了方向；复核权威件后全部回退，并新增 CI 反断言防止再走偏。
+
+| 曾改成（immortalwrt） | 权威件 | 现状 |
+|---|---|---|
+| `LDO_REG1 = 900000` | xck-nas / iStoreOS 均为 `950000` | 已回退 |
+| `vcc3v3_pcie` 并成一级 | xck-nas 无此结构、iStoreOS 为两级 | 已回退为两级 |
+| `vcc3v3_minipcie` 去掉 `always-on` | xck-nas 有 `always-on` + `boot-on` | 已恢复 |
+| `phy-mode` / 关机属性照抄 | 两份权威件是 6.12 主线写法 | 未改（见下表） |
+
+### 4 处「板级相同、写法不同」（iNextOS 6.1 vendor 内核适配，不能照抄权威件）
+
+| # | 权威件（6.12 主线） | 本仓（6.1 vendor） | 依据 |
+|---|---|---|---|
+| 1 | `phy-mode = "rgmii-id"`，无延迟属性（iStoreOS 件） | `"rgmii"` + `tx_delay`/`rx_delay` | `dwmac-rk.c:2920-2923`：RGMII_ID 分支调 `set_to_rgmii(bsp,-1,-1)`；`DELAY_ENABLE` 宏（L219-221）对 `-1` 取 `*_DLY_DISABLE` ⇒ MAC 延迟位清零且不读 DT 延迟。xck-nas 与本仓同值同结论 |
+| 2 | `system-power-controller` | `rockchip,system-power-controller` | `drivers/mfd/rk808.c:1533` 只认 `rockchip,` 前缀；主线名不注册 sys_off handler ⇒ poweroff 退化成 halt |
+| 3 | `pcie2x1 = "okay"`（iStoreOS 件） | `pcie2x1 = "disabled"`（`sata2` okay） | `rk356x.dtsi:2383`(pcie2x1) 与 `:569`(sata2) 共用 `combphy2_psq`，一个要 PCIe 模式、一个要 SATA 模式，物理互斥；实机反编译 DTB 上 pcie2x1 即为 disabled |
+| 4 | 无 `rockchip,bifurcation` | 两个 PCIe3 口都写了 | 适配期实测：去掉后另一路 LTSSM 停在 `0x1`、lspci 少一个 RTL8125。**待查**：在 `pcie-rockchip.c`/`-host.c`/`phy-rockchip-snps-pcie3.c` 中未找到读取者（lane 映射来自硬件寄存器 `PCIE_CORE_LANE_MAP`；PHY 侧 DT 开关是 `rockchip,pcie30-phymode`），全仓 grep 未完成 ⇒ 暂按「无害保留」 |
+
+另外 LED 的 `default-state = "on"`、`hdmi rockchip,phy-table` 是本树特有：厂商系统靠用户态脚本点亮指示灯（iNextOS 没有该脚本），PHY 校准表取自同树官方 EVB `rk3568-evb.dtsi`。
+
+CI 新增 **(2d-2) 板级对齐自证**：7 组断言逐条锚在**镜像 DTB** 上，另加 2 条反断言（gmac PHY 不得有 `realtek,led-data`、`/vcc3v3-pcie-regulator` 不得带 `gpios`）。
+
 ## 已验证 / 待验证
 
 - ✅ 板级 DTS 在 6.1 vendor 内核树中 `cpp + dtc` 编译 **0 Error**，产物外设状态与本机实机逐项一致
