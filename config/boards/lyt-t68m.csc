@@ -28,7 +28,18 @@ declare -g RELEASE="trixie"
 FULL_DESKTOP="no"
 BOOT_FDT_FILE="rockchip/rk3568-lyt-t68m.dtb"
 BOOT_SCENARIO="spl-blobs"
-IMAGE_PARTITION_TABLE="gpt"
+# 分区表：**msdos（MBR）**，不是 gpt —— 2026-10-28 定案，为了从结构上根除"写卡就起不来"的坑。
+#   原因：GPT 的备份头 / last_usable_lba / 保护 MBR 的 count 全部按**镜像文件大小**算，
+#         镜像（≈3.4 GiB）dd 进更大的 TF 卡后三者都指向镜像末尾而不是卡末尾：
+#            · U-Boot 宽容（`Using Backup GPT` 照样引导）—— 所以"能引导"不能当判据；
+#            · Linux 内核严格时直接拒表 → 卡上只出 `mmcblkX`、不出 `p1 p2` → `Waiting for root device`。
+#         MBR 没有备份表、没有 last_usable、没有保护 MBR —— 这三个字段根本不存在，
+#         任何容量的卡写进去都不需要再跑任何修补脚本（飞牛线 2026-10-27 踩的就是这个坑，
+#         那边靠 `tools/gpt-fix.py --apply --renew-partuuid=2` 兜底，本板直接换表根除）。
+#   与官方 R1 的差异：官方发布件用 gpt。但引导链不依赖表类型 —— U-Boot 用 `part uuid` 现场取值，
+#         内核按 PARTUUID/UUID 找 root，两种表等价；本仓仍保留 `tools/gpt-fix.py`（含 --selftest）
+#         作兜底与回归判据，CI 发现是 MBR 表时会直接跳过。
+IMAGE_PARTITION_TABLE="msdos"
 BOOTFS_TYPE="fat"
 
 # 扩展：本板依赖 istorenext + t68m-roceos 两个扩展。CI 通过命令行

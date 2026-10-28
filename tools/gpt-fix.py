@@ -170,6 +170,16 @@ def main():
     last = dev_size(path) // SEC - 1
     print("[gpt-fix] %s 末扇区=%d 模式=%s%s" % (path, last, "APPLY" if do_apply else "诊断",
                                               "" if renew is None else " 换 PARTUUID:p%d" % renew))
+    # MBR(msdos) 表直接跳过：没有备份头 / last_usable / 保护 MBR，不存在"写进更大的盘就失配"这回事。
+    # 本仓 lyt-t68m 自 2026-10-28 起就是 msdos —— 从结构上根除该坑，不再依赖写卡后修补。
+    with open(path, "rb") as f:
+        f.seek(SEC)
+        sig = f.read(8)
+        f.seek(446)
+        mtype = f.read(5)[4]
+    if sig != b"EFI PART" and mtype != 0xEE:
+        print("  ✓ 非 GPT 分区表（msdos/MBR）—— 无备份头可失配，跳过")
+        return 0
     rc = 0
     with open(path, "r+b" if do_apply else "rb") as f:
         probs, prim, entries = scan(f, last)
