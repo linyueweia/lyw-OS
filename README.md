@@ -380,6 +380,16 @@ lsblk -o NAME,SIZE,FSTYPE,PARTLABEL /dev/sdX
 
 引导件不用跟着改：armbian 的 `boot.cmd` 用 `part uuid ${devtype} ${devnum}:${partition}` 现场取值，换 GUID 不影响任何东西。工具只动 GPT 元数据（保护 MBR / 主头 / 主项 / 备份项 / 备份头），**分区内容零修改**；自带 `--selftest`（正例 1 / 负例 2 / APPLY 2 / PARTUUID 1），CI 每次构建先跑自测，并对产物镜像做一次自洽检查 —— 但**镜像自洽 ≠ 卡能起**，写进更大的卡后那一步绕不过去。
 
+**在 Windows 上刷完卡怎么跑这一步**（手上没有 Linux 时）：把读卡器拔下来插到**任意一台在跑的 iNextOS/飞牛 设备的 USB 口**（本板、R5S、K1、H88K 都行），远端执行即可：
+
+```sh
+scp tools/gpt-fix.py root@<设备IP>:/tmp/
+ssh root@<设备IP> 'lsblk -o NAME,SIZE,MODEL /dev/sdX   # 先认准是哪块（选错会毁盘）
+                     python3 /tmp/gpt-fix.py /dev/sdX --apply --renew-partuuid=2'
+```
+
+（`/dev/sdX` 按 `lsblk` 里你能认出的那个 U 盘改；板子上通常只有一块 `mmcblk*` 是系统盘。）
+
 **链路稳定性 / EEE（2026-10-17 定案：网卡配置全部回归 inextos 官方写法，镜像里没有任何网卡运行时服务）**：eth0(GMAC0) 与 eth1(GMAC1) 都是 RK3568 dwmac + RTL8211F，写法与官方板级（easepi-r1 / easepi-r2 / h88k）一致 —— `phy-mode = "rgmii"` + `tx_delay`/`rx_delay`（本板取值取自厂商 6.12 出厂 DTB：gmac0 `0x3c`/`0x2f`、gmac1 `0x42`/`0x28`），RGMII 延迟全部由 MAC 侧产生。**为什么不用 `rgmii-id`**：vendor `dwmac-rk.c` 的 `PHY_INTERFACE_MODE_RGMII_ID` 分支是 `set_to_rgmii(bsp, -1, -1)`，`DELAY_ENABLE` 宏对 -1 取 `*_DLY_DISABLE` ⇒ MAC 侧延迟位被清零、DT 里的 `tx_delay/rx_delay` 根本不读 （实测 56B 丢 65% / 1400B 丢 90%，而接口错误计数为 0）；只把 `phy-mode` 改成 `"rgmii"` 却不给延迟值则是两个千兆口一起死（已实机证伪）。**因此删除了原有的两个运行时补丁件**：直写 GRF `0xfdc60000` 的 `t68m-gmac-delay`、`gpioset` 常驻的 `gmac-phy-hold`，只留 DT 里的 `snps,reset-gpio` / `-active-low` / `-delays-us`。**EEE（IEEE 802.3az / LPI）—— 2026-10-28 改判：两个千兆口只关 1000BASE-T，写 `eee-broken-1000t`**。此前（2026-10-17）的结论是"按官方默认全开"，基于主路由 XCK 上四个口 EEE 本来就是 disabled 的观测；10-28 在 T68M 实机上推翻：`eth1` 的 EEE 处于 **active**，LPI 进出已 **1568/1570** 次，`phy_eee_wakeup_error_n=1`（PHY 的 `MDIO_PCS_EEE_WK_ERR` 记到一次唤醒序列失败），且故障形态是"**carrier 仍在、协商仍是 1000M、但整口收不到包** → 下级设备 DHCP 拿不到地址 → 30 s 后自分配 169.254 → **拔插网线即恢复**"。这与软件层故障（dnsmasq/网桥，拔插不会好）截然不同，落在 PHY 末端。机制在源码里可查：`stmmac_main.c:1090` 调 `phy_init_eee(phy, !priv->plat->rx_clk_runs_in_lpi)`，而该内核里 `rx_clk_runs_in_lpi` **没有任何赋值入口**（无 DT 属性）⇒ 恒为 0 ⇒ `phy.c:1355-1358` 给 PHY 打开 `MDIO_PCS_CTRL1_CLKSTOP_EN`（LPI 期间停 xMII RX 时钟），来包必须先唤醒时钟，唤醒竞争失败即丢帧。官方 R1 走的是同一条代码路径（其 DTS 一个 `eee` 属性都没有），它不犯只是因为对端/走线没触发，**不是官方"解决"了它**。内核提供的正式解法就是 PHY 节点的 `eee-broken-1000t`：`phy-core.c:385` 读到它 → `eee_broken_modes |= MDIO_EEE_1000T` → `phy.c:1454` 在写 `MDIO_AN_EEE_ADV` 时把 1000T 从通告里剔掉并重新协商，1G 的 EEE 不再协商；100M 与两个 2.5G 口（RTL8125，另一套驱动）不受影响。同一棵内核树里有 **18 个厂商 DTS** 用同一写法（`imx8mp-evk`、`fsl-ls1028a-kontron-*`、`meson-g12a-x96-max`、`am335x-baltos` 等），属标准做法。仍然**不装** `eth-eee-off` / `t68m-eee-off` / `r8125-eee.conf` 这类运行期件。另注：`rx_clk_runs_in_lpi=1`（保留 EEE 又不停时钟）在这颗内核里无 DT 入口，要它就得打内核补丁，故不选。此前 2026-10-13 装过的 EEE 关闭服务、10-17 的推翻记录均保留在下文，作为判据反转的留档。
 （2026-10-13 曾按"高峰期密集 Link Down + 对端 `phy_eee_wakeup_error_n=8126`"装过 EEE 关闭服务；2026-10-17 在主路由 `iNextOS-XCK` 上按日志复核推翻：四个口 EEE 本来就是 disabled（RTL8211F 的 EEE 通告寄存器为 0）、对端 K1 的 LPI 计数全 0，而 141 次 Link Down 每次都伴随对端 1–5 s 内重新 DHCP（K1 / Tenda 在重启），20 s 的空档也不符合本端自协商时长，最后一次事件与对端上线同秒。⇒ 掉线是对端设备重启，不是 EEE。）**CI 断言**：镜像里不得出现 `t68m-gmac-delay` / `t68m-eee-off` / `eth-eee-off.service` / `gmac-phy-hold.service` / `r8125-eee.conf`；两个 gmac 节点必须是 `rgmii` + 上述延迟值（含 `clock_in_out = "output"`）；两个千兆口 PHY 节点**必须**带 `eee-broken-1000t`（只许这一种，出现 `eee-broken-100tx`/`10gt` 判红）。
 5. 登录：`root` / `password`
