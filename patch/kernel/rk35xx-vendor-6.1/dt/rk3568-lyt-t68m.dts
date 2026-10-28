@@ -719,11 +719,10 @@
 	   `cd-gpios = <&gpio0 RK_PA4 ...>` 把同一根脚申请成 GPIO ⇒ 内核每次开机都打
 	   `pin 4 already requested by fe2b0000.mmc; switch mux 1 to GPIO` + WARNING 栈
 	   （pinctrl-rockchip.c rockchip_pmx_gpio_set_direction）。
-	   改为用下面这个 RK_FUNC_GPIO 组替代 `&sdmmc0_det`：pull-up 保留、mux 只有 GPIO 一个owner。 */
-	sdmmc0_cd {
-		sdmmc0_cd_gpio: sdmmc0-cd-gpio {
-			rockchip,pins = <0 RK_PA4 RK_FUNC_GPIO &pcfg_pull_up>;
-		};
+	   改为用下面这个 RK_FUNC_GPIO 组替代 `&sdmmc0_det`：pull-up 保留、mux 只有 GPIO 一个owner。
+	   注：组必须**直接挂在 /pinctrl 下**（不要再套一层容器），CI 断言的就是 /pinctrl/sdmmc0-cd-gpio。 */
+	sdmmc0_cd_gpio: sdmmc0-cd-gpio {
+		rockchip,pins = <0 RK_PA4 RK_FUNC_GPIO &pcfg_pull_up>;
 	};
 
 	leds {
