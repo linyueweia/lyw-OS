@@ -30,12 +30,23 @@
 
 ## 板级 DTS 的来源（重要）
 
-`patch/kernel/rk35xx-vendor-6.1/dt/rk3568-lyt-t68m.dts` 以 **T68M 自己的官方设备树**为基准：
+`patch/kernel/rk35xx-vendor-6.1/dt/rk3568-lyt-t68m.dts` 以 **T68M 自己的设备树**为基准，
+权威件按下列优先级（2026-10-28 定案）：
 
 ```
-来源：iStoreOS / ImmortalWrt 官方
-  immortalwrt/immortalwrt @594ab12  target/linux/rockchip/files/arch/arm64/boot/dts/rockchip/rk3568-lyt-t68m.dts
+① 权威件  xck-nas/dts/rk3568-lyt-t68m.dts          飞牛金标准（fnOS 6.12 + 厂商出厂 DTB 对齐，
+                                                    含完整 GPU/VPU/NPU 节点、gpio-keys 复位键、
+                                                    PHY leds 子节点、label lan1~lan4）
+② 旁证    istoreos/istoreos @istoreos-25.12
+          target/linux/rockchip/dts/rk3568/rk3568-t68m.dts
+③ 旁证    immortalwrt/immortalwrt @594ab12
+          target/linux/rockchip/files/arch/arm64/boot/dts/rockchip/rk3568-lyt-t68m.dts
+④ 增补    linyueweia/lyw @custom/0001-rockchip-t68m-enable-sata2-sdio-wifi.patch
 ```
+
+**口径：板级硬件以 ① 为准，属性写法按 iNextOS 的 6.1 vendor BSP 内核适配**（差异逐项列在
+「板级 DTS 的对齐口径」章节）。三份权威件同源但已分叉，**不能互相替代** —— 2026-10-28 就因为
+先按 ③ 对齐，把 LDO 电压、稳压器结构、miniPCIe 常供改反了方向，已回退并加 CI 反断言。
 
 **这是关键**：板级数据必须用目标板自己的设备树，**不能**拿别的板子（如 rk3568-roc-k40pro）的骨架去套
 （那样会导致 PCIe 全挂 / 网口不通 / 显示黑屏）。
@@ -261,7 +272,7 @@ iStoreOS 的 DTB** 做了 A/B 对照。结论分两类：
 | `mali fde60000.gpu: Failed to map registers`、IRQ 未找到 | gpu 节点与官方 R1 逐项一致（reg/interrupts/opp/supply），残余在内核驱动层 |
 | `rkvdec/rkvenc: Failed to get leakage`、`shared_niu_* not found` | 与官方 R1 逐项一致，仅 phandle 编号不同 |
 | `rockchip-vop2: no regulator (vop) found` | R1 同样没有 `vop-supply`（可选属性，指错会调错稳压器，故不加） |
-| `rk_gmac: Can not read property tx_delay/rx_delay` | 上游 OpenWrt 本板 DTS 用 `phy-mode = "rgmii-id"`，延迟由 PHY 内部完成，DT 本就不该有这两个属性；R1 的值是其 PCB 参数，不可照抄 |
+| `rk_gmac: Can not read property tx_delay/rx_delay`（**仅 iStoreOS 那支 6.12 内核**） | 该支内核用 `phy-mode = "rgmii-id"`，延迟由 PHY 内部完成，DT 本就不该有这两个属性。**本仓跑的是 6.1 vendor，结论正好相反**：`dwmac-rk.c:2920-2923` 的 RGMII_ID 分支会 `set_to_rgmii(bsp,-1,-1)` 把 MAC 延迟位清零且不读 DT 延迟，必须写 `rgmii` + `tx_delay`/`rx_delay`。R1 的延迟值是其 PCB 参数，同样不可照抄 |
 | `dw-pcie ... invalid resource / Failed to initialize host` | 通用驱动先试探失败、`rk-pcie` 随即接手并成功（两路均 link up） |
 | `rk817-battery/charger/codec: matching dt id`、`arm-scmi protocol 17/22 not active`、`blkmapd`、BPF LSM、alsa-restore GOTO 标签 | 共享 dtsi / 发行版自带噪音，官方镜像同样存在 |
 
@@ -352,13 +363,16 @@ sync
 ## 目录
 
 ```
-config/boards/lyt-t68m.csc                     板级配置（BOOT_FDT_FILE / 网口重命名 / 默认网口）
+config/boards/lyt-t68m.csc                     板级配置（RELEASE=trixie 钉死 / FULL_DESKTOP=no /
+                                              BOOT_FDT_FILE / 网口重命名 udev + eth_order / 默认网口）
 patch/kernel/rk35xx-vendor-6.1/dt/*.dts        板级设备树（框架会自动拷入内核并改 Makefile）
-（kernel-files/ 里的旧 DTB 已删除：它是 rgmii-id 且无 tx/rx_delay 的历史件，CI 不再用它兜底）
+（kernel-files/ 里的旧 DTB 已删除：它是 rgmii-id 且无 tx/rx_delay 的历史件，CI 不再用它兜底；
+ 该目录不在 git 里，仅本地可能残留空目录）
 kernel-files/{idbloader.img,u-boot.itb}      仅作参考备份，**不再注入镜像**
 extensions/t68m-roceos.sh                     框架扩展：构建阶段补齐 roceos 网页后台 + AIC8800 WiFi 固件
                                               （载荷走 userpatches/overlay，服务用 chroot_sdcard systemctl enable 启用）
-.github/workflows/build.yml                    CI：云编译 + 镜像后处理 + DDR / 设备树 / roceos 三重回读自证
+.github/workflows/build.yml                    CI：云编译 + 镜像后处理 + DDR / 设备树 / 板级对齐 /
+                                              roceos 五重回读自证
 ```
 
 ## 板级 DTS 的对齐口径（2026-10-28 定案）
@@ -417,4 +431,12 @@ CI 新增 **(2d-2) 板级对齐自证**：7 组断言逐条锚在**镜像 DTB** 
 - ✅ **实机启动验证通过**：DDR 固件升级后 T68M 已能正常启动（此前为「上电后串口/HDMI 完全无输出」）
 - ✅ **roceos 网页后台**：构建阶段注入方案已在本地镜像上逐项验证（组件齐备 / `default` 站点已移除 /
   `nginx -t` 通过 / Flask 栈可导入）
+- ✅ **板级语义级审计**（2026-10-28）：65 个 `&label` 覆写目标全部解析、0 未知引用；
+  被启用节点引用的 51 个 pinctrl 组之间**无引脚复用冲突**；所有 `*-supply` 都指向存在且未 disabled
+  的 regulator；与三份权威件逐属性比对（宏展开 + 十六进制归一 + 覆写合并后的语义 diff）
 - ⏳ **CI 端到端验证**：新工作流一次完整构建的产物仍需实机复验
+- ⏳ **`rockchip,bifurcation` 的读取者未定位**：在 `pcie-rockchip.c` / `-host.c` /
+  `phy-rockchip-snps-pcie3.c` 中均未找到（lane 映射来自硬件寄存器 `PCIE_CORE_LANE_MAP`；
+  PHY 侧 DT 开关是 `rockchip,pcie30-phymode`），全仓 grep 未完成 ⇒ 暂按「无害保留」，
+  **在完成全仓确认并实机复验两个 RTL8125 都在之前，不要删这两行**
+- ⏳ **本地构建须自带扩展**：`ENABLE_EXTENSIONS="istorenext,t68m-roceos"`（见 `.csc` 内注释）

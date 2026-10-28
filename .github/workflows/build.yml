@@ -124,7 +124,10 @@ jobs:
           # 用扩展的 post_post_debootstrap_tweaks 钩子（官方 istorenext 扩展同款阶段）安装，
           # 而不是 customize-image.sh：实测后者建的 systemd 启用链接会被后续流程清掉。
           mkdir -p build/userpatches/extensions
-          cp -v t68m/extensions/t68m-roceos.sh build/userpatches/extensions/
+          # 路径必须是仓内真实路径 extensions/t68m-roceos.sh（曾误写成 t68m/extensions/，
+          # 目录不存在 → cp 在 set -e 下直接失败、整条构建中断）。先断言再拷，杜绝同类问题。
+          [ -f extensions/t68m-roceos.sh ] || { echo "!! extensions/t68m-roceos.sh 不在仓内（路径写错了？）"; exit 1; }
+          cp -v extensions/t68m-roceos.sh build/userpatches/extensions/
           # 关键：框架只加载【可执行】的扩展脚本，权限不对会被静默跳过
           # （日志表现：Extension search result [ Found 0 extensions ]）
           chmod +x build/userpatches/extensions/*.sh
