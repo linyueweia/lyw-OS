@@ -87,19 +87,13 @@
 		};
 	};
 
-	/* HDMI 连接器：官方 DTS 有该节点（hdmi-connector/a 型口），我们此前缺失。
-	   它声明板上那个 HDMI-A 插座，配合下面 &hdmi 的 port@1(hdmi_out_con)
-	   形成完整的 of_graph 链路；缺它时部分驱动路径找不到连接器。 */
-	hdmi-con {
-		compatible = "hdmi-connector";
-		type = "a";
-
-		port {
-			hdmi_con_in: endpoint {
-				remote-endpoint = <&hdmi_out_con>;
-			};
-		};
-	};
+	/* HDMI 连接器：**故意不写**（2026-10 实机定位，勿再加回来）。
+	   本内核（6.1 vendor BSP）的 dw-hdmi 自己创建 connector，板级再自造一个
+	   `hdmi-connector` 节点 + `&hdmi` 的 port@1 与之共存，会让 drm_bridge_attach
+	   返回 -22、整个 HDMI probe 失败（实测 `dwhdmi-rockchip: probe of
+	   fe0a0000.hdmi failed with error -22`，/sys/class/drm 下无任何 HDMI 连接器）。
+	   xck-nas 飞牛金标准件（6.12/6.18 主线族）里确实有 hdmi-con —— 那是**另一条内核线**
+	   的写法，属性不能互抄（详见 README「显示 / LED / 硬件编解码」）。 */
 
 	sdio_pwrseq: sdio-pwrseq {
 		compatible = "mmc-pwrseq-simple";
@@ -334,19 +328,11 @@
 		<297000000 0x800b 0x0000 0x01ad>,
 		<594000000 0x8029 0x0000 0x0088>,
 		<000000000 0x0000 0x0000 0x0000>;
-	/* BSP 的 rk356x.dtsi 只给了 port@0(hdmi_in_vp0/vp1，进)，没有输出端口。
-	   官方 DTS 的 &hdmi_out 就是这里的 port@1，与根节点 hdmi-con 对接。
+	/* BSP 的 rk356x.dtsi 只给了 port@0(hdmi_in_vp0/vp1，进)，**故意不补 port@1**：
+	   输出端口由 BSP dw-hdmi 自己创建（与根节点 hdmi-con 成对删除，见文件上方注释）。
+	   路由方向由下面 &route_hdmi { connect = <&vp0_out_hdmi>; } 指定。
 	   注意：dtc 要求属性必须写在子节点之前，status 不能放在 ports 后面。 */
 	status = "okay";
-	ports {
-		port@1 {
-			reg = <1>;
-
-			hdmi_out_con: endpoint {
-				remote-endpoint = <&hdmi_con_in>;
-			};
-		};
-	};
 };
 
 &hdmi_in_vp0 {

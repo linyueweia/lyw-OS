@@ -125,6 +125,9 @@ jobs:
           # 工具本身必须先带负例自测（正例 1 / 负例 2 / APPLY 2 / PARTUUID 1）。
           python3 t68m/tools/gpt-fix.py --selftest
           echo "    ✅ gpt-fix 判据自测通过"
+          echo "--- 板级对齐判据自测（(2d-2) 的正/负例；run #73 就是这块把好 DTB 判死）---"
+          python3 t68m/tools/board-parity-check.py --selftest
+          echo "    ✅ board-parity 判据自测通过"
 
       - name: Fetch roceos web-UI payload into userpatches/overlay
         # 官方 iNextOS 镜像自带 roceos 网页后台（/opt/roceos + /opt/roceos-ai +
@@ -344,52 +347,20 @@ jobs:
           fi
 
           # (2d-2) 板级对齐自证（2026-10-28 定口径）
-          #      **板级硬件以 xck-nas 仓的飞牛金标准 DTS 为准**（xck-nas/dts/rk3568-lyt-t68m.dts，
-          #      fnOS 6.12 + 厂商出厂 DTB 对齐件，含完整 GPU/VPU/NPU 节点）；iStoreOS 官方件与
-          #      immortalwrt 594ab12 为旁证。**属性写法按 iNextOS 的 6.1 vendor BSP 内核适配**。
-          #      以下逐条锚在**镜像里的 DTB** 上断言，并对走偏过的写法做反断言。
-          echo "--- (2d-2) 板级对齐自证（权威件 = xck-nas 飞牛金标准 DTS）---"
-          afail=0
-          _j() { sudo fdtget -t "$1" "$DT" "${2}" "${3}" 2>/dev/null || echo MISSING; }
-          _has() { sudo fdtget -p "$DT" "$1" >/dev/null 2>&1; }
-          # ① 两把按键都在：gpio-keys 复位键(gpio3 RK_PB1) + adc-keys(saradc0/1750000mV)
-          [ "$(_j s /gpio-keys/button-reset label)" = "reset" ] || { echo "!! /gpio-keys/button-reset 缺失（金标准有复位键）"; afail=1; }
-          _kg=$(_j x /gpio-keys/button-reset gpios | tr -d ' ')
-          [ "$_kg" = "0x030x090x01" ] || { echo "!! 复位键 gpios 应为 <0x03 0x09 0x01>(gpio3 PB1 低有效)，实为 $_kg"; afail=1; }
-          [ "$(_j s /adc-keys compatible)" = "adc-keys" ] || { echo "!! /adc-keys 缺失（金标准也保留 ADC 键）"; afail=1; }
-          # ② 千兆口 PHY 的 LED：用 realtek,led-data = <0x6151>（T68M 厂商出厂件的值）。
-          #    依据：同一棵 6.1.115-vendor 内核构建的官方 Easepi-r1 DTB 用的也是
-          #    realtek,led-data（值 0xac10），iStoreOS 官方件同样 —— 6.1 vendor 系就该这么写。
-          #    2026-10-28 曾按 fnOS(6.12) 的件改成 leds 子节点，经与官方 R1 DTB 比对后回退。
-          for _p in /ethernet@fe2a0000 /ethernet@fe010000; do
-            _ld=$(_j x "$_p/mdio/ethernet-phy@0" realtek,led-data | tr -d ' ')
-            [ "$_ld" = "0x6151" ] || { echo "!! $_p PHY realtek,led-data 应为 0x6151，实为 $_ld"; afail=1; }
-            if _has "$_p/mdio/ethernet-phy@0/leds"; then
-              echo "!! $_p PHY 不该有 leds 子节点（那是 6.12 的写法，6.1 vendor 用 realtek,led-data）"; afail=1; fi
-          done
-          # ③ 四个口的 label（金标准 lan1~lan4）
-          [ "$(_j s /ethernet@fe2a0000 label)" = "lan1" ] || { echo "!! gmac0 label 应为 lan1"; afail=1; }
-          [ "$(_j s /ethernet@fe010000 label)" = "lan2" ] || { echo "!! gmac1 label 应为 lan2"; afail=1; }
-          [ "$(_j s /pcie@fe270000/pcie@0,0/pcie-eth@10,0 label)" = "lan4" ] || { echo "!! rtl8125@10,0 label 应为 lan4"; afail=1; }
-          [ "$(_j s /pcie@fe280000/pcie@0,0/pcie-eth@20,0 label)" = "lan3" ] || { echo "!! rtl8125@20,0 label 应为 lan3"; afail=1; }
-          # ④ vdda0v9_image(LDO_REG1) = 950000（金标准值）
-          _v=$(_j u '/i2c@fdd40000/pmic@20/regulators/LDO_REG1' regulator-max-microvolt | tr -d ' ')
-          [ "$_v" = "950000" ] || { echo "!! LDO_REG1(vdda0v9_image) 应为 950000，实为 $_v"; afail=1; }
-          # ⑤ PCIe 3.3V 两级结构（pi6c 使能 + pcie 延时），不得并成一级
-          _pg=$(_j x /vcc3v3-pi6c-regulator gpios | tr -d ' ')
-          [ "$_pg" = "0x000x1c0x00" ] || { echo "!! /vcc3v3-pi6c-regulator gpios 应为 <0x00 0x1c 0x00>，实为 $_pg"; afail=1; }
-          [ "$(_j x /vcc3v3-pcie-regulator gpios)" = "MISSING" ] || {
-            echo "!! /vcc3v3-pcie-regulator 不该带 gpios（两级结构，使能脚在 pi6c 上）"; afail=1; }
-          # ⑥ miniPCIe 3.3V 必须常供（金标准 regulator-always-on + boot-on）
-          sudo dtc -I dtb -O dts "$DT" -o /tmp/t68m-img.dts 2>/dev/null || true
-          if ! grep -A14 'vcc3v3-minipcie-regulator' /tmp/t68m-img.dts | grep -q 'regulator-always-on'; then
-            echo "!! /vcc3v3-minipcie-regulator 丢了 regulator-always-on（miniPCIe 3.3V 必须常供）"; afail=1; fi
-          # ⑦ HDMI 连接器 + 输出端口（BSP rk356x.dtsi 只给 port@0，port@1 是本仓补的）
-          [ "$(_j s /hdmi-con compatible)" = "hdmi-connector" ] || { echo "!! /hdmi-con 缺失"; afail=1; }
-          [ "$(_j s '/hdmi@fe0a0000/ports/port@1/endpoint' remote-endpoint)" != "MISSING" ] || {
-            echo "!! hdmi port@1(hdmi_out_con) 缺失"; afail=1; }
-          [ "$afail" = 0 ] || { echo "!! 板级对齐自证失败（板级项偏离了 xck-nas 金标准件）"; exit 1; }
-          echo "    ✅ 板级对齐自证通过（gpio-keys+adc-keys / PHY leds / label lan1~4 / LDO 950mV / pi6c 两级 / minipcie 常供 / hdmi-con）"
+          #      权威链：板级硬件以 xck-nas 飞牛金标准 DTS 为准，**属性写法按本内核线（6.1 vendor）适配**。
+          #      判据单点化在 tools/board-parity-check.py（纯 python 读 FDT，不依赖 dtc/fdtget）：
+          #      本机拿上一发产物 DTB 就能秒级复跑，改判据不必赌一次 90 分钟构建。
+          #      run #73 这块红 4 条，根因是**判据写法**而不是 DTB（真 DTB 逐条实测：值全对）：
+          #        ① gpios 写死 `0x030x090x01` —— fdtget -t x 的输出**不带 0x 前缀**，且第一格是
+          #           随内核树变化的 phandle（本树 0x8b）⇒ 真值 `8b 9 1`（剥空格 "8b91"）被判红；
+          #        ② realtek,led-data 期望 "0x6151"、实得 "6151"，同一个前缀问题；
+          #        ③ pi6c gpios 期望 phandle=0，实得 0x3f，同上；
+          #        ④ `fdtget -t s` 读 phandle 属性（非字符串）直接失败，`|| echo MISSING`
+          #           把"存在"读成"缺失" ⇒ hdmi port@1 被误报缺失。
+          #      ⇒ 判据一律绑语义：phandle 解析成节点名再比、数值按 cell 比，不写字面量。
+          echo "--- (2d-2) 板级对齐自证（判据 = tools/board-parity-check.py）---"
+          python3 t68m/tools/board-parity-check.py "$DT" \
+            || { echo "!! 板级对齐自证失败（板级项偏离了金标准件口径）"; exit 1; }
 
           # (2e) 关机断电自证（2026-10-22 实机对照定案）：vendor 6.1 的 rk808.c 只认
           #      of_property_read_bool(np, "rockchip,system-power-controller")；主线写法

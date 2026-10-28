@@ -425,13 +425,13 @@ extensions/t68m-roceos.sh                     框架扩展：构建阶段补齐 
 |---|---|
 | 复位键 | `gpio-keys` + `gpios = <&gpio3 RK_PB1 GPIO_ACTIVE_LOW>` + 50ms 去抖（`reset_button_pin` pinctrl 组） |
 | ADC 键 | `adc-keys`（saradc0，keyup 1750000mV）—— 与复位键**并存**，两份权威件都保留 |
-| 千兆口 PHY LED | Realtek `leds` 子节点：`led@1` amber/lan、`led@2` green/lan，`default-state = "keep"` |
+| 千兆口 PHY LED | `realtek,led-data = <0x6151>`（6.1 vendor 写法制）；**不用** Realtek `leds` 子节点 —— 那是 6.12/主线写法，本树 PHY 驱动不认 |
 | 2.5G 口 | RTL8125 ×2，`label = "lan3"`(20,0) / `"lan4"`(10,0) |
 | 千兆口名 | `label = "lan1"`(gmac0) / `"lan2"`(gmac1) |
 | `vdda0v9_image`(LDO_REG1) | 950000 |
 | PCIe 3.3V | 两级：`vcc3v3_pi6c`（使能脚 gpio0 RK_PD4 + `always-on`/`boot-on`）→ `vcc3v3_pcie`（`startup-delay-us = 50000`） |
 | miniPCIe 3.3V | `vcc3v3_minipcie`，gpio0 RK_PC7，`regulator-always-on` + `boot-on` |
-| HDMI | `hdmi-con`（`hdmi-connector`/type "a"）+ `&hdmi` 补 `ports/port@1`(`hdmi_out_con`) |
+| HDMI | **不写** `hdmi-con` / `&hdmi port@1`（6.1 vendor 的 BSP dw-hdmi 自建 connector，共存会 `-22`）；路由由 `&route_hdmi { status="okay"; connect=<&vp0_out_hdmi>; }` + `rockchip,phy-table` 完成 |
 | 加速器 | GPU/VPU(`rkvdec`/`vdpu`)/`rkvenc`/`iep`/`jpegd`/`rk_rga`/`mpp-srv`/NPU 全部使能 |
 | 千兆口时序 | `phy-mode = "rgmii"` + `tx_delay`/`rx_delay`（`0x3c/0x2f`、`0x42/0x28`），与 xck-nas 同值同注释 |
 
@@ -454,10 +454,21 @@ extensions/t68m-roceos.sh                     框架扩展：构建阶段补齐 
 | 2 | `system-power-controller` | `rockchip,system-power-controller` | `drivers/mfd/rk808.c:1533` 只认 `rockchip,` 前缀；主线名不注册 sys_off handler ⇒ poweroff 退化成 halt |
 | 3 | `pcie2x1 = "okay"`（iStoreOS 件） | `pcie2x1 = "disabled"`（`sata2` okay） | `rk356x.dtsi:2383`(pcie2x1) 与 `:569`(sata2) 共用 `combphy2_psq`，一个要 PCIe 模式、一个要 SATA 模式，物理互斥；实机反编译 DTB 上 pcie2x1 即为 disabled |
 | 4 | 无 `rockchip,bifurcation` | 两个 PCIe3 口都写了 | 适配期实测：去掉后另一路 LTSSM 停在 `0x1`、lspci 少一个 RTL8125。**待查**：在 `pcie-rockchip.c`/`-host.c`/`phy-rockchip-snps-pcie3.c` 中未找到读取者（lane 映射来自硬件寄存器 `PCIE_CORE_LANE_MAP`；PHY 侧 DT 开关是 `rockchip,pcie30-phymode`），全仓 grep 未完成 ⇒ 暂按「无害保留」 |
+| 5 | 有 `hdmi-con`（`hdmi-connector`）+ `&hdmi port@1` | **两者都不写** | 6.1 vendor BSP 的 dw-hdmi 自己创建 connector，板级再自造一个与之共存 ⇒ `drm_bridge_attach -22`、HDMI 整体 probe 失败（实测 `dwhdmi-rockchip: probe of fe0a0000.hdmi failed with error -22`）。xck-nas 是 6.12/6.18 主线族，写法不能互抄 |
 
 另外 LED 的 `default-state = "on"`、`hdmi rockchip,phy-table` 是本树特有：厂商系统靠用户态脚本点亮指示灯（iNextOS 没有该脚本），PHY 校准表取自同树官方 EVB `rk3568-evb.dtsi`。
 
-CI 新增 **(2d-2) 板级对齐自证**：7 组断言逐条锚在**镜像 DTB** 上，另加 2 条反断言（gmac PHY 不得有 `realtek,led-data`、`/vcc3v3-pcie-regulator` 不得带 `gpios`）。
+CI 的 **(2d-2) 板级对齐自证** 已单点化到 `tools/board-parity-check.py`（纯 python 读 FDT，不依赖 dtc/fdtget）：
+17 条断言逐条锚在**镜像 DTB** 上，phandle 一律解析成节点名再比、数值按 cell 比（不写死字面量），
+其中 5 条是反断言（两口 PHY 不得有 `leds` 子节点、`/vcc3v3-pcie-regulator` 不得带 `gpios`、
+`/hdmi-con` 与 `&hdmi port@1` 不得存在）。工具自带 `--selftest`（9 例正/负例，含"判据抛异常必须算失败"），
+已挂进构建早期门禁；本机可用上一发产物 DTB 秒级复跑：
+`python3 tools/board-parity-check.py <dtb>`。
+
+> run #73 这块红 4 条，全部是**判据写法**问题、不是 DTB：`fdtget -t x` 输出不带 `0x` 前缀、
+> 且 gpios 第一格是随树变化的 phandle（本树 `0x8b`/`0x3f`），旧断言写死 `0x030x090x01`、`0x6151`、
+> phandle=0 于是把**完全正确的镜像**判死；`fdtget -t s` 读 phandle 属性还会直接失败，
+> `|| echo MISSING` 把"存在"读成"缺失"。教训：判据绑语义，不绑某次定案的字符串。
 
 ## 已验证 / 待验证
 
