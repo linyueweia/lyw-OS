@@ -714,6 +714,18 @@
 };
 
 &pinctrl {
+	/* 卡的检测脚必须**只由 GPIO 这一份 pinctrl 占着**：
+	   基线里 `sdmmc0_det` 是 `<0 RK_PA4 1 ...>`（mux 1），而本节点又用
+	   `cd-gpios = <&gpio0 RK_PA4 ...>` 把同一根脚申请成 GPIO ⇒ 内核每次开机都打
+	   `pin 4 already requested by fe2b0000.mmc; switch mux 1 to GPIO` + WARNING 栈
+	   （pinctrl-rockchip.c rockchip_pmx_gpio_set_direction）。
+	   改为用下面这个 RK_FUNC_GPIO 组替代 `&sdmmc0_det`：pull-up 保留、mux 只有 GPIO 一个owner。 */
+	sdmmc0_cd {
+		sdmmc0_cd_gpio: sdmmc0-cd-gpio {
+			rockchip,pins = <0 RK_PA4 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+
 	leds {
 		led_power_pin: led-power-pin {
 			rockchip,pins = <4 RK_PC6 RK_FUNC_GPIO &pcfg_pull_none>;
@@ -798,7 +810,7 @@
 	cd-gpios = <&gpio0 RK_PA4 GPIO_ACTIVE_LOW>;
 	disable-wp;
 	pinctrl-names = "default";
-	pinctrl-0 = <&sdmmc0_bus4 &sdmmc0_clk &sdmmc0_cmd &sdmmc0_det>;
+	pinctrl-0 = <&sdmmc0_bus4 &sdmmc0_clk &sdmmc0_cmd &sdmmc0_cd_gpio>;
 	sd-uhs-sdr50;
 	vmmc-supply = <&vcc3v3_sd>;
 	vqmmc-supply = <&vccio_sd>;

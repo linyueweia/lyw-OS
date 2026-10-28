@@ -313,6 +313,14 @@ jobs:
             done
           done
           echo "    ✅ 千兆口时序 = rgmii + MAC 延迟；EEE 仅关闭 1000BASE-T"
+          # 卡检测脚：必须用 RK_FUNC_GPIO 的专用 pinctrl 组，而不是基线的 sdmmc0_det(mux 1)，
+          # 否则 cd-gpios 与 pinctrl 抢同一根脚，内核每次开机都打
+          # `pin 4 already requested by fe2b0000.mmc; switch mux 1 to GPIO` + WARNING 栈。
+          if sudo fdtget -p "$DT" /pinctrl/sdmmc0-cd-gpio 2>/dev/null | grep -qx "rockchip,pins"; then
+            echo "    ✅ 卡检测脚用专用 GPIO 组 /pinctrl/sdmmc0-cd-gpio"
+          else
+            echo "!! 缺 /pinctrl/sdmmc0-cd-gpio（cd-gpios 会与 sdmmc0_det 抢同一 pin，开机 WARNING）"; exit 1
+          fi
 
           # (2d-2) 板级对齐自证（2026-10-28 定口径）
           #      **板级硬件以 xck-nas 仓的飞牛金标准 DTS 为准**（xck-nas/dts/rk3568-lyt-t68m.dts，
