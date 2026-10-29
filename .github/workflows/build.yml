@@ -182,6 +182,11 @@ jobs:
           #   其中 avahi-autoipd 会在 DHCP 失败时往网卡塞 169.254 链路本地地址、
           #   unattended-upgrades 会在后台升级并重启 dnsmasq/网络服务 —— 都会表现为
           #   “网口灯亮、下级设备拿不到 IP / 用几小时就掉”，与官方行为不一致。
+          # COMPRESS_OUTPUTIMAGE 只出 sha,img（**不在这里压 xz**）：
+          #   下一条 step 会挂载镜像改内容（roceos 载荷 / gpt-fix），改完框架那份 .xz 就失效，
+          #   必须 rm 掉重压 —— 实测白压 109 秒 + 多写删 0.9GB（run #80 日志：
+          #   07:55:53 开压 → 07:57:42 完成 → 07:58:24 re-compressing 又压一遍 400 秒）。
+          #   压缩统一放在 post-process 末尾（唯一一次），产物仍是单层 .img.xz。
           ./compile.sh build \
             BOARD=lyt-t68m \
             BRANCH=vendor \
@@ -190,7 +195,7 @@ jobs:
             BUILD_MINIMAL=yes \
             BUILD_DESKTOP=no \
             KERNEL_CONFIGURE=no \
-            COMPRESS_OUTPUTIMAGE="sha,img,xz" \
+            COMPRESS_OUTPUTIMAGE="sha,img" \
             SHARE_LOG=yes \
             EXPERT=yes
         env:
@@ -515,19 +520,19 @@ jobs:
           #   写卡后必须再跑 `python3 tools/gpt-fix.py <卡> --apply --renew-partuuid=2`。
           python3 t68m/tools/gpt-fix.py "$IMG" --apply || { echo "!! 镜像 GPT 自洽化失败"; exit 1; }
 
-          if [ -f "${IMG}.xz" ]; then
-            # 注意顺序：xz 压缩成功后**会删除原始 .img**，所以必须是
-            # 「先算 .img 校验 → 再压缩 → 最后算 .xz 校验」。
-            # 上一版把 .img 的 sha256 放在压缩之后执行，导致 "No such file or directory"。
-            IMGDIR="$(cd "$(dirname "${IMG}")" && pwd)"; IMGBASE="$(basename "${IMG}")"
-            echo "--- 先按当前内容重算 .img 校验（镜像被改动过，armbian 原值可能已过期）"
-            sudo sh -c "cd '${IMGDIR}' && sha256sum '${IMGBASE}' > '${IMGBASE}.sha'"
-            echo "re-compressing..."; rm -f "${IMG}.xz"; sudo xz -T0 "${IMG}"; ls -lh "${IMG}.xz"
-            echo "--- 压缩后重算 .xz 校验"
-            sudo sh -c "cd '${IMGDIR}' && sha256sum '${IMGBASE}.xz' > '${IMGBASE}.xz.sha'"
-            echo "--- 最终校验文件:"
-            sudo sh -c "cat '${IMGDIR}/${IMGBASE}.sha' '${IMGDIR}/${IMGBASE}.xz.sha'"
-          fi
+          # 唯一一次压缩：镜像在本 step 里被改过（roceos 载荷 / gpt-fix），所以必须在改完之后压。
+          # 顺序不能换：xz 成功后原始 .img 会被删 → 必须「先算 .img 校验 → 再压缩 → 最后算 .xz 校验」。
+          # 上一版把 .img 的 sha256 放在压缩之后，报过 "No such file or directory"。
+          # 这里不再用 `if [ -f "${IMG}.xz" ]` 守卫：框架已改为 COMPRESS_OUTPUTIMAGE="sha,img"（不预压），
+          # 无条件执行才是唯一一次压缩；`rm -f` 保留以防框架哪天又自己出一份 .xz。
+          IMGDIR="$(cd "$(dirname "${IMG}")" && pwd)"; IMGBASE="$(basename "${IMG}")"
+          echo "--- 先按当前内容重算 .img 校验（镜像被改动过，armbian 原值可能已过期）"
+          sudo sh -c "cd '${IMGDIR}' && sha256sum '${IMGBASE}' > '${IMGBASE}.sha'"
+          echo "compressing (唯一一次)..."; rm -f "${IMG}.xz"; sudo xz -T0 "${IMG}"; ls -lh "${IMG}.xz"
+          echo "--- 压缩后重算 .xz 校验"
+          sudo sh -c "cd '${IMGDIR}' && sha256sum '${IMGBASE}.xz' > '${IMGBASE}.xz.sha'"
+          echo "--- 最终校验文件:"
+          sudo sh -c "cat '${IMGDIR}/${IMGBASE}.sha' '${IMGDIR}/${IMGBASE}.xz.sha'"
 
       - name: Show outputs
         if: always()
