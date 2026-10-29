@@ -363,6 +363,23 @@ jobs:
               echo "    ❌ ${s}.service 未启用（官方网络栈缺失）"; dfail=1
             fi
           done
+
+          # smartmontools 必须「包在、不启用」= 官方 R1 口径（2026-10-29 实机取证）。
+          # 官方 R1 发布件里该包存在，但 multi-user.target.wants 里没有启用链接；
+          # 我们的镜像曾因 Debian preset 在构建期自动生成链接，开机必 failed
+          #（eMMC 不支持 SMART，smartd 退出码 17），实机 enable 链 mtime 早于开机时刻。
+          # 构建期由 csc 的 post_family_tweaks__lyt_t68m_disable_smartmontools 删链，
+          # 此处反向断言把关：链接不得出现（防 preset 复活 / 后续步骤重新 enable）。
+          if [ -e "$PROT/etc/systemd/system/multi-user.target.wants/smartmontools.service" ] ||
+             [ -L "$PROT/etc/systemd/system/multi-user.target.wants/smartmontools.service" ]; then
+            echo "    ❌ smartmontools 被启用（官方 R1 不启用，开机必 failed）"; dfail=1
+          else
+            echo "    ✅ smartmontools 未启用（与官方 R1 一致：包在、不启用）"
+          fi
+          # 反向中的反向：包本身必须还在。官方 R1 同样发行这个包 —— 卸载它是自造差异，不是对齐官方。
+          if ! grep -q "^Package: smartmontools$" "$PROT/var/lib/dpkg/status" 2>/dev/null; then
+            echo "    ❌ smartmontools 包缺失（官方 R1 发行该包，应只 disable 不要卸载）"; dfail=1
+          fi
           if [ -L "$PROT/etc/systemd/system/networking.service.wants/istorenext-init-network.service" ]; then
             echo "    ✅ istorenext-init-network 挂接 networking.service"
           else
