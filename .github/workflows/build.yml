@@ -61,7 +61,8 @@ jobs:
     name: Build iNextOS image (LYT T68M / RK3568)
     needs: upstream
     # 手动触发 / push 时总是构建；定时任务只在上游有更新时构建
-    if: github.event_name != 'schedule' || needs.upstream.outputs.changed == 'true'
+    # always()：上游指纹检查自身失败（403 / 网络抖动）不应该把 push / dispatch 触发的构建一起吞掉。
+    if: always() && (github.event_name != 'schedule' || needs.upstream.outputs.changed == 'true')
     runs-on: ubuntu-24.04
     timeout-minutes: 350
     steps:
@@ -129,6 +130,12 @@ jobs:
           python3 t68m/tools/board-parity-check.py --selftest
           echo "    ✅ board-parity 判据自测通过"
 
+      # ── 包集合判据自身的正/负例自测（秒级；与 lyw-rr / lyw-hh 同一份代码）──
+      - name: Self-test packages parity gate
+        run: |
+          set -e
+          python3 /tools/packages-parity-check.py --selftest
+
       - name: Fetch roceos web-UI payload into userpatches/overlay
         # 官方 iNextOS 镜像自带 roceos 网页后台（/opt/roceos + /opt/roceos-ai +
         # 3 个 systemd 服务 + nginx 站点与证书 + Flask 栈），本适配仓库原先缺这一整套，
@@ -138,10 +145,10 @@ jobs:
         run: |
           set -e
           mkdir -p build/userpatches/overlay
-          URL="https://github.com/linyueweia/lyw-OS/releases/download/roceos-payload-v1/roceos-payload.tar.gz"
+          URL="https://github.com/linyueweia/lyw-OS/releases/download/roceos-payload-v2/roceos-payload.tar.gz"
           curl -fsSL -o build/userpatches/overlay/roceos-payload.tar.gz "$URL"
           # 载荷指纹固定断言：内容一旦变化立即失败，不留"以为改了其实没改"的余地。
-          echo "6b819584a1b1701163f8983bd59a31821643f64dd65c76ba8f500ef54c5e8bb5  build/userpatches/overlay/roceos-payload.tar.gz" | sha256sum -c -
+          echo "cbd911c6fad5a3655bc52a39e4099b8812c70d8358840e1d1d8bf6db956703d1  build/userpatches/overlay/roceos-payload.tar.gz" | sha256sum -c -
           # 扩展放在 userpatches/extensions/ —— 框架会自动搜索并加载该目录（日志里能见到
           # "Extension search Directory .../build/userpatches/extensions"）。
           # 用扩展的 post_post_debootstrap_tweaks 钩子（官方 istorenext 扩展同款阶段）安装，
@@ -349,11 +356,20 @@ jobs:
           # 官方 R1 发布件实测 718 包、我们旧构建 958 包，差的就是这批。
           # 危害最直接的两个：avahi-autoipd（DHCP 失败时塞 169.254 地址）、
           # unattended-upgrades（后台升级并重启 dnsmasq/网络服务）。
-          for p in avahi-autoipd unattended-upgrades vnstat iperf3 plymouth dkms rng-tools-debian build-essential; do
-            if grep -q "^Package: ${p}\$" "$PROT/var/lib/dpkg/status" 2>/dev/null; then
-              echo "    ❌ 出现 packages.additional 成员 ${p}（官方 minimal 不含，BUILD_MINIMAL 应为 yes）"; dfail=1
+          # 判据单点 = tools/packages-parity-check.py（来源减法；与 lyw-rr / lyw-hh / lyw-kk 同一份）。
+          # packages.additional 的成员有四个【官方 minimal 也有】的合法来源（框架三层 base 清单 /
+          # istorenext 的 add_packages_to_image / 依赖传递 / apt auto）—— 官方 A2 2.9.1 镜像实测那
+          # 15 个成员官方全都有，「出现即红」是假判据。这里只判「没有任何来源」的成员。
+          if [ -d "$GITHUB_WORKSPACE/build/config/cli" ]; then
+            export BUILD_TREE="$GITHUB_WORKSPACE/build"
+            PACKAGES_EXTENSION_FILES="$(printf '%s ' $GITHUB_WORKSPACE/build/extensions/istorenext.sh $GITHUB_WORKSPACE/build/userpatches/extensions/*.sh)"
+            export PACKAGES_EXTENSION_FILES
+            if ! python3 tools/packages-parity-check.py --root "$PROT" --build-tree "$BUILD_TREE" --release "${RELEASE:-trixie}" --arch arm64 $(for f in $PACKAGES_EXTENSION_FILES; do echo --extension "$f"; done); then
+              echo "    ❌ 包集合与官方 minimal 口径不一致（上述包没有任何合法来源）"; dfail=1
             fi
-          done
+          else
+            echo '    !! 没有构建树，包集合口径无法核对（不给假绿）'; dfail=1
+          fi
           if [ -e "$PROT/etc/systemd/system/multi-user.target.wants/NetworkManager.service" ]; then
             echo "    ❌ NetworkManager 仍被启用"; dfail=1
           fi

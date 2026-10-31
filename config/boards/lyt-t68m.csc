@@ -24,8 +24,12 @@ KERNEL_TARGET="vendor"
 # 停在交互选择 —— 漏传一次，本地产物就和 CI 产物不是同一个发行版。
 declare -g RELEASE="trixie"
 
-# NAS CLI 镜像（CI 固定 BUILD_DESKTOP=no）：不要桌面包、不要桌面 logo。
-FULL_DESKTOP="no"
+# 桌面开关：与官方 easepi-r1.csc 同值（FULL_DESKTOP 是框架废弃变量，lib/ 全仓无读取者；
+# BOOT_LOGO 只在 BUILD_DESKTOP=yes 时生效，见 distro-agnostic.sh:591）。
+# 官方发布件同样是「csc 写 yes + CI 传 BUILD_DESKTOP=no」⇒ 产物是 CLI；本仓照抄，
+# 不在 csc 里改这两个值（改了=自造与官方的差异）。
+FULL_DESKTOP="yes"
+BOOT_LOGO="desktop"
 BOOT_FDT_FILE="rockchip/rk3568-lyt-t68m.dtb"
 BOOT_SCENARIO="spl-blobs"
 # 分区表：**msdos（MBR）**，不是 gpt —— 2026-10-28 定案，为了从结构上根除"写卡就起不来"的坑。

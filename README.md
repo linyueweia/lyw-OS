@@ -393,10 +393,20 @@ python3 tools/gpt-fix.py /dev/sdX --apply --renew-partuuid=2
 
 **关机断电（2026-10-22 定案）**：`&rk809` 的关机句柄属性必须写 **vendor 名 `rockchip,system-power-controller;`**。vendor 6.1 的 `drivers/mfd/rk808.c` 只做 `of_property_read_bool(np, "rockchip,system-power-controller")` 判断；主线写法（无前缀 `system-power-controller;`，immortalwrt 风格板级 DTS 通篇如此）在 vendor 树里**不被识别**，于是关机句柄不注册 → `poweroff` 退化成 halt：整板不断电、风扇照转、网口灯亮。实机对照（同一块 T68M、同一个风扇）：iStoreOS（6.12 主线）关机风扇停；本镜像（6.1 vendor）关机风扇不停。原 DTS 是从 immortalwrt 主线设备树移植的，把这行原样带过来才中招；官方 Easepi R1 的 vendor DTB 用的是带前缀写法。CI 在反解出的 DTB 上**锚行首**断言（`^\s*rockchip,system-power-controller;`），并反断言无前缀写法不得存在 —— 裸 `grep system-power-controller` 会被长名命中而假绿。
 
+## roceos 版本口径（2026-10-31，四仓统一）
+
+- 镜像内置 roceos = 官方在线通道最新版 **3.0.2**（`channel=stable_arm`、`arch=arm64`）。
+- 官方更新地址（从 roceos 二进制里取的常量，非文档抄录）：
+  `http://update.roceos.com:14380/api/v1/updates/check?version=<当前>&channel=stable_arm&arch=arm64`
+- 版本记录在 `official-roceos.txt`；`.github/workflows/check-roceos.yml` 每天 03:30 CST 比对，
+  官方发新版就红（= 该重建载荷，不是构建坏了）。自查：`python3 tools/check-roceos.py --pinned official-roceos.txt`。
+- 载荷 = `roceos-payload-v2`（lyw-OS release），sha256 `cbd911c6…39dd48`；
+  取件/打包/判据三件事见 lyw-rr / lyw-hh 的 docs「roceos 载荷怎么跟官方版本」一节（四仓同一套）。
+
 ## 目录
 
 ```
-config/boards/lyt-t68m.csc                     板级配置（RELEASE=trixie 钉死 / FULL_DESKTOP=no /
+config/boards/lyt-t68m.csc                     板级配置（RELEASE=trixie 钉死 / 桌面开关与官方 csc 同值(BUILD_DESKTOP=no 关桌面) /
                                               BOOT_FDT_FILE / 网口重命名 udev + eth_order / 默认网口）
 patch/kernel/rk35xx-vendor-6.1/dt/*.dts        板级设备树（框架会自动拷入内核并改 Makefile）
 （kernel-files/ 里的旧 DTB 已删除：它是 rgmii-id 且无 tx/rx_delay 的历史件，CI 不再用它兜底；

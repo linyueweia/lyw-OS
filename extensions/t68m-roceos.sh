@@ -14,8 +14,8 @@
 #   nginx 站点+证书（移除 default 站点）、Flask 栈、AIC8800 SDIO 固件
 # ══════════════════════════════════════════════════════════════════════════
 
-# 载荷 sha256（与 release roceos-payload-v1 一致；内容一变就报错）
-ROCEOS_PAYLOAD_SHA256="6b819584a1b1701163f8983bd59a31821643f64dd65c76ba8f500ef54c5e8bb5"
+# 载荷 sha256（与 release roceos-payload-v2 一致；内容一变就报错）
+ROCEOS_PAYLOAD_SHA256="cbd911c6fad5a3655bc52a39e4099b8812c70d8358840e1d1d8bf6db956703d1"
 
 function post_post_debootstrap_tweaks__t68m_roceos() {
 	display_alert "Installing roceos web UI + AIC8800 firmware (T68M)" "$EXTENSION" "info"
