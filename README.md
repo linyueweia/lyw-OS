@@ -221,17 +221,20 @@ phy phy-fe8c0000.phy.7: bifurcation enabled      ← 我们这边没有这一行
 
 ## 自动跟踪上游（每日检查 + 自动编译）
 
-`.github/workflows/build.yml` 有两个作业：
+本仓只有一个工作流 `.github/workflows/build.yml`（2026-10-31 合并定案），四个作业串成一条链：
 
 1. `upstream` —— 读取 `jjm2473/armbian-easepi` 的 `easepi-v26.02` 分支 HEAD，
    与仓库根目录的 `last-upstream-sha` 比对；
-2. `build` —— 上游有变化时（或手动触发 / push 到 main）编译镜像。
+2. `roceos` —— 查官方 `stable_arm/arm64` 最新版，有新版本就重建本仓载荷、发本仓 release、
+   改三处 pin 并推送（下游 `build` 会 checkout 到刚推的提交）；
+3. `dtb` —— 只编板级 DTS 的 4 分钟快验（同一份 `tools/board-parity-check.py`，52 条断言）；
+4. `build` —— 上游有变化 / roceos 跟到新版 / push / 手动时编译镜像。
 
 | 事件 | 行为 |
 |---|---|
-| `workflow_dispatch`（手动） | 总是构建 |
-| `push` 到 `main` | 总是构建（仅改 `last-upstream-sha` 的提交被 `paths-ignore` 跳过） |
-| `schedule` 每日 03:00 CST | 上游 HEAD 变过 → 记录新指纹并自动构建；没变 → 数秒内跳过 |
+| `workflow_dispatch`（手动） | `task=auto` 全链；`check` 只检查与跟版；`build` 只构建；`dtb` 只快验 |
+| `push` 到 `main` | 全链（仅改 `last-upstream-sha` 的提交被 `paths-ignore` 跳过） |
+| `schedule` 每日 03:00 CST | 上游 HEAD 变过 或 roceos 跟到新版 → 构建；都没变 → 几分钟内结束 |
 
 构建始终 checkout 上游分支的**最新提交**，所以"跟踪上游"就等于"上游一动就出一版新固件"。
 上游更新频率约每 2–3 周一次。
@@ -398,8 +401,9 @@ python3 tools/gpt-fix.py /dev/sdX --apply --renew-partuuid=2
 - 镜像内置 roceos = 官方在线通道最新版 **3.0.2**（`channel=stable_arm`、`arch=arm64`）。
 - 官方更新地址（从 roceos 二进制里取的常量，非文档抄录）：
   `http://update.roceos.com:14380/api/v1/updates/check?version=<当前>&channel=stable_arm&arch=arm64`
-- 版本记录在 `official-roceos.txt`；`.github/workflows/check-roceos.yml` 每天 03:30 CST 比对，
-  官方发新版就红（= 该重建载荷，不是构建坏了）。自查：`python3 tools/check-roceos.py --pinned official-roceos.txt`。
+- 版本记录在 `official-roceos.txt`；由 `.github/workflows/build.yml` 的 `roceos` job 每天 03:00 CST
+  核对并**自动跟版**（重建载荷 → 发本仓 release → 改三处 pin → 推送；同一次 run 的 build 直接接着编）。
+  自查：`python3 tools/check-roceos.py --pinned official-roceos.txt`。
 - 载荷 = `roceos-payload-v2`（lyw-OS release），sha256 `cbd911c6…39dd48`；
   取件/打包/判据三件事见 lyw-rr / lyw-hh 的 docs「roceos 载荷怎么跟官方版本」一节（四仓同一套）。
 
@@ -416,8 +420,8 @@ tools/dts-lint.py                            板级 DTS 语法门（1 秒，无�
                                               免得语法错白烧一小时（run #62 实测 3414 秒才报 syntax error）
 extensions/t68m-roceos.sh                     框架扩展：构建阶段补齐 roceos 网页后台 + AIC8800 WiFi 固件
                                               （载荷走 userpatches/overlay，服务用 chroot_sdcard systemctl enable 启用）
-.github/workflows/build.yml                    CI：云编译 + 镜像后处理 + DDR / 设备树 / 板级对齐 /
-                                              roceos 五重回读自证
+.github/workflows/build.yml                    唯一工作流：上游跟踪 / roceos 跟版 / DTB 快验 /
+                                              云编译 + 镜像后处理 + DDR / 设备树 / 板级对齐 / roceos 五重回读自证
 ```
 
 ## 板级 DTS 的对齐口径（2026-10-28 定案）
@@ -478,10 +482,11 @@ DTB 相关断言（`(2b)(2c)(2d)(2d-2)(2e)` 五组）已全部单点化到 `tool
 
 | 门 | 位置 | 跑什么 | 耗时 |
 |---|---|---|---|
-| DTB 校验（前置） | `.github/workflows/dtb-verify.yml`（push `patch/**`/`tools/**` + 手动） | 稀疏 clone 内核树 → 内核同款 `cpp+dtc` 编板级 DTB → 52 条断言 | ~4 分钟 |
+| DTB 快验（前置） | `build.yml` 的 `dtb` job（每次 push / 定时 / 手动 `task=dtb`） | codeload 取内核树片段 → 内核同款 `cpp+dtc` 编板级 DTB → 52 条断言 | ~4 分钟 |
 | 镜像自证（末尾） | `build.yml` step「Post-process image」 | 同一工具对**镜像里的 DTB** 复核 | 构建内 |
 
-**规矩：`dtb-verify` 全绿之前不开整机镜像构建**（一次 90~120 分钟，白跑代价太高）。
+**规矩：`dtb` job 全绿才会进整机镜像构建**（`build` 的 `needs` 含 `dtb`，且 `if` 排除它的失败；
+一次 90~120 分钟，白跑代价太高）。基础设施抖动（取树失败）可用 `task=build` 手动绕过。
 工具自带 `--selftest`，夹具是 run #73 的**真实产物 DTB**（`tools/tests/fixtures/`，md5 `147678fe…`）：
 原样必须精确报红 2 条 hdmi、摘掉那两棵子树必须 52/52 全绿、6 个字节级负例各必须精确报红 1 条。
 本机也能秒级复跑：`python3 tools/board-parity-check.py <dtb>`。

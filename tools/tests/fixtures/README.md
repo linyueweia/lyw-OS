@@ -24,5 +24,5 @@
 3. **字节级负例**：按属性值偏移篡改真实 DTB（引脚、led-data、tx_delay、LDO、mpp status、
    pi6c 引脚），每次必须精确新增 1 条红
 
-整机镜像构建与 `.github/workflows/dtb-verify.yml` 跑的是同一个判据工具，
+整机镜像构建与 `build.yml` 的 `dtb` job 跑的是同一个判据工具，
 所以这里的正/负例结果直接决定那两处门禁是否可信。
