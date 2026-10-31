@@ -1,2 +1,4 @@
 *.pyc
 __pycache__/
+roceos-payload.tar.gz
+.roceos-sync.env
