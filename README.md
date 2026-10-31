@@ -154,9 +154,9 @@ build/userpatches/overlay/roceos-payload.tar.gz   载荷（框架自动送进 ch
 → 用框架 helper 启用服务并补一份 systemd preset（防后续 `preset-all` 重置）→
 Flask 栈优先 `apt`、失败回退载荷内文件 → 全部逐项自证，任一失败即整步失败。
 
-载荷来源：从**官方 Easepi-r1 镜像**中提取（就是官方自己用的那一份），发布为
-[release `roceos-payload-v1`](https://github.com/linyueweia/lyw-OS/releases/tag/roceos-payload-v1)，
-工作流以固定 sha256 断言校验（内容一变立即失败）。构建后另有回读自证：镜像内必须齐备
+载荷来源：以 v1 骨架（从**官方 Easepi-r1 镜像**提取的那一份）为底，用官方在线升级包按安装映射
+覆盖重建，发布为**本仓**的 [release `roceos-payload-v2`](https://github.com/linyueweia/lyw-OS/releases/tag/roceos-payload-v2)；
+工作流以固定 sha256 断言校验（内容一变立即失败）。重建与重发由 `tools/roceos-sync.py` + `roceos` job 自动完成。构建后另有回读自证：镜像内必须齐备
 上述组件、`default` 站点必须已移除，并 `chroot` 实测导入 Flask 栈。
 
 ### 显示 / LED / 硬件编解码（2026-10，实机定位）
@@ -404,7 +404,7 @@ python3 tools/gpt-fix.py /dev/sdX --apply --renew-partuuid=2
 - 版本记录在 `official-roceos.txt`；由 `.github/workflows/build.yml` 的 `roceos` job 每天 03:00 CST
   核对并**自动跟版**（重建载荷 → 发本仓 release → 改三处 pin → 推送；同一次 run 的 build 直接接着编）。
   自查：`python3 tools/check-roceos.py --pinned official-roceos.txt`。
-- 载荷 = `roceos-payload-v2`（lyw-OS release），sha256 `cbd911c6…39dd48`；
+- 载荷 = `roceos-payload-v2`（**本仓 release**，跟版时自动重发），sha256 `cbd911c6…39dd48`；
   取件/打包/判据三件事见 lyw-rr / lyw-hh 的 docs「roceos 载荷怎么跟官方版本」一节（四仓同一套）。
 
 ## 目录
