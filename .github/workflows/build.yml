@@ -134,7 +134,7 @@ jobs:
       - name: Self-test packages parity gate
         run: |
           set -e
-          python3 /tools/packages-parity-check.py --selftest
+          python3 t68m/tools/packages-parity-check.py --selftest
 
       - name: Fetch roceos web-UI payload into userpatches/overlay
         # 官方 iNextOS 镜像自带 roceos 网页后台（/opt/roceos + /opt/roceos-ai +
@@ -364,7 +364,7 @@ jobs:
             export BUILD_TREE="$GITHUB_WORKSPACE/build"
             PACKAGES_EXTENSION_FILES="$(printf '%s ' $GITHUB_WORKSPACE/build/extensions/istorenext.sh $GITHUB_WORKSPACE/build/userpatches/extensions/*.sh)"
             export PACKAGES_EXTENSION_FILES
-            if ! python3 tools/packages-parity-check.py --root "$PROT" --build-tree "$BUILD_TREE" --release "${RELEASE:-trixie}" --arch arm64 $(for f in $PACKAGES_EXTENSION_FILES; do echo --extension "$f"; done); then
+            if ! python3 t68m/tools/packages-parity-check.py --root "$PROT" --build-tree "$BUILD_TREE" --release "${RELEASE:-trixie}" --arch arm64 $(for f in $PACKAGES_EXTENSION_FILES; do echo --extension "$f"; done); then
               echo "    ❌ 包集合与官方 minimal 口径不一致（上述包没有任何合法来源）"; dfail=1
             fi
           else
