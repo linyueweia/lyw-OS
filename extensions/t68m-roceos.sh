@@ -15,7 +15,7 @@
 # ══════════════════════════════════════════════════════════════════════════
 
 # 载荷 sha256（与 release roceos-payload-v2 一致；内容一变就报错）
-ROCEOS_PAYLOAD_SHA256="cbd911c6fad5a3655bc52a39e4099b8812c70d8358840e1d1d8bf6db956703d1"
+ROCEOS_PAYLOAD_SHA256="2ebfdc31a79337b7eb0e4d4987a687b3c31b0f55a2113b9727a35cf0e0c680c9"
 
 function post_post_debootstrap_tweaks__t68m_roceos() {
 	display_alert "Installing roceos web UI + AIC8800 firmware (T68M)" "$EXTENSION" "info"
