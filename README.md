@@ -226,7 +226,7 @@ phy phy-fe8c0000.phy.7: bifurcation enabled      ← 我们这边没有这一行
 1. `upstream` —— 读取 `jjm2473/armbian-easepi` 的 `easepi-v26.02` 分支 HEAD，
    与仓库根目录的 `last-upstream-sha` 比对；
 2. `roceos` —— 查官方 `stable_arm/arm64` 最新版，有新版本就重建本仓载荷、发本仓 release、
-   改三处 pin 并推送（下游 `build` 会 checkout 到刚推的提交）；
+   改两处 pin（`official-roceos.txt` + 扩展常量） 并推送（下游 `build` 会 checkout 到刚推的提交）；
 3. `dtb` —— 只编板级 DTS 的 4 分钟快验（同一份 `tools/board-parity-check.py`，52 条断言）；
 4. `build` —— 上游有变化 / roceos 跟到新版 / push / 手动时编译镜像。
 
@@ -398,13 +398,15 @@ python3 tools/gpt-fix.py /dev/sdX --apply --renew-partuuid=2
 
 ## roceos 版本口径（2026-10-31，四仓统一）
 
-- 镜像内置 roceos = 官方在线通道最新版 **3.0.2**（`channel=stable_arm`、`arch=arm64`）。
+- 镜像内置 roceos = 官方在线通道最新版（`channel=stable_arm`、`arch=arm64`）。
+  **具体版本号不在文档里抄** —— 以 `official-roceos.txt` 的 `version` 为准（跟版 job 自动维护）。
 - 官方更新地址（从 roceos 二进制里取的常量，非文档抄录）：
   `http://update.roceos.com:14380/api/v1/updates/check?version=<当前>&channel=stable_arm&arch=arm64`
 - 版本记录在 `official-roceos.txt`；由 `.github/workflows/build.yml` 的 `roceos` job 每天 03:00 CST
-  核对并**自动跟版**（重建载荷 → 发本仓 release → 改三处 pin → 推送；同一次 run 的 build 直接接着编）。
+  核对并**自动跟版**（重建载荷 → 发本仓 release → 改两处 pin（`official-roceos.txt` + 扩展常量） → 推送；同一次 run 的 build 直接接着编）。
   自查：`python3 tools/check-roceos.py --pinned official-roceos.txt`。
-- 载荷 = `roceos-payload-v2`（**本仓 release**，跟版时自动重发），sha256 `cbd911c6…39dd48`；
+- 载荷 = 本仓 release `roceos-payload-<版本>`（跟版时自动重发），URL 与 sha256 **只在
+  `official-roceos.txt`**（`payload_url` / `payload_sha256`），`build.yml` 运行时从这里读；
   取件/打包/判据三件事见 lyw-rr / lyw-hh 的 docs「roceos 载荷怎么跟官方版本」一节（四仓同一套）。
 
 ## 目录
